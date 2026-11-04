@@ -35,11 +35,11 @@ jobs:
 
       - name: Package
         run: |
-          asset="Pi-GPU-UI-$VERSION-aarch64.zip"
-          ditto -c -k --sequesterRsrc --keepParent "target/release/Pi GPU UI.app" "target/release/$asset"
+          asset="Pi-GPUI-$VERSION-aarch64.zip"
+          ditto -c -k --sequesterRsrc --keepParent "target/release/Pi GPUI.app" "target/release/$asset"
           echo "ASSET=target/release/$asset" >> "$GITHUB_ENV"
           # Which pi versions this release supports; read by the app's updater.
-          "target/release/Pi GPU UI.app/Contents/MacOS/pi-gpu-ui" --pi-compat > target/release/pi-compat.json
+          "target/release/Pi GPUI.app/Contents/MacOS/pi-gpui" --pi-compat > target/release/pi-compat.json
           cat target/release/pi-compat.json
 
       - name: Publish the release
@@ -47,5 +47,5 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           gh release create "$GITHUB_REF_NAME" "$ASSET" target/release/pi-compat.json \
-            --title "Pi GPU UI $VERSION" \
+            --title "Pi GPUI $VERSION" \
             --generate-notes
