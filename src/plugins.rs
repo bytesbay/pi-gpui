@@ -1,0 +1,710 @@
+//! Plugin host: discovers app plugins, starts each one on first use and routes
+//! its messages. The manifest and protocol are specified in docs/PLUGINS.md.
+//!
+//! A plugin is a separate process speaking line-delimited JSON over stdio, so
+//! it can be written in any language and cannot crash or block the app.
+
+use std::collections::HashSet;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::Command;
+
+use futures::StreamExt as _;
+use futures::channel::mpsc;
+use gpui::{
+    AppContext as _, AsyncApp, Context, EventEmitter, KeyBinding, Keystroke, SharedString, Task,
+    WeakEntity,
+};
+use serde_json::{Value, json};
+
+use crate::jsonl::{JsonlMessage, JsonlProcess};
+use crate::pi;
+use crate::sessions;
+use crate::ui::{Color, IconName};
+
+pub const PROTOCOL_VERSION: u64 = 1;
+const MAX_MESSAGES_PER_UPDATE: usize = 256;
+
+/// Runs a plugin command; bound to the keybindings from plugin manifests.
+#[derive(Clone, PartialEq, Debug, gpui::Action)]
+#[action(namespace = plugins, no_json)]
+pub struct RunPluginCommand {
+    pub command: SharedString,
+}
+
+#[derive(Clone)]
+pub struct PluginCommand {
+    pub id: SharedString,
+    pub plugin_id: SharedString,
+    pub title: SharedString,
+    pub icon: IconName,
+    pub keybinding: Option<SharedString>,
+    pub in_composer: bool,
+}
+
+#[derive(Clone)]
+pub struct StatusItem {
+    pub plugin_id: SharedString,
+    pub id: SharedString,
+    pub text: SharedString,
+    pub color: Color,
+    pub busy: bool,
+}
+
+/// Where a command was invoked; sent to the plugin with `command.run`.
+#[derive(Clone, Default)]
+pub struct CommandContext {
+    pub workspace: Option<PathBuf>,
+    pub session: Option<PathBuf>,
+}
+
+pub enum PluginEvent {
+    ComposerInsert {
+        text: String,
+        replace_last: bool,
+        space_before: bool,
+    },
+    ComposerSetText(String),
+    Notify {
+        message: String,
+        color: Color,
+    },
+}
+
+enum PluginState {
+    Stopped,
+    Starting,
+    Running(JsonlProcess),
+}
+
+struct Plugin {
+    id: SharedString,
+    name: SharedString,
+    dir: PathBuf,
+    run: Vec<String>,
+    state: PluginState,
+    /// Messages for the plugin while its process is starting.
+    pending: Vec<Value>,
+    _start_task: Task<()>,
+    _pump_task: Task<()>,
+}
+
+pub struct PluginRegistry {
+    plugins: Vec<Plugin>,
+    commands: Vec<PluginCommand>,
+    active_commands: HashSet<SharedString>,
+    statuses: Vec<StatusItem>,
+    _load_task: Task<()>,
+}
+
+impl EventEmitter<PluginEvent> for PluginRegistry {}
+
+impl PluginRegistry {
+    /// Starts with no plugins and reads manifests in the background: plugin
+    /// folders can sit in places macOS guards (e.g. ~/Documents), and a
+    /// permission prompt must never block the first frame.
+    pub fn new(key_context: &'static str, cx: &mut Context<Self>) -> Self {
+        let discovery = cx.background_spawn(async { discover_plugins() });
+        let load_task = cx.spawn(async move |this, cx| {
+            let found = discovery.await;
+            this.update(cx, |this, cx| this.register(found, key_context, cx))
+                .ok();
+        });
+        Self {
+            plugins: Vec::new(),
+            commands: Vec::new(),
+            active_commands: HashSet::new(),
+            statuses: Vec::new(),
+            _load_task: load_task,
+        }
+    }
+
+    fn register(
+        &mut self,
+        found: Vec<Result<(PathBuf, ParsedManifest), String>>,
+        key_context: &'static str,
+        cx: &mut Context<Self>,
+    ) {
+        let mut errors = Vec::new();
+        let mut bindings = Vec::new();
+        for result in found {
+            let (plugin_dir, parsed) = match result {
+                Ok(found) => found,
+                Err(error) => {
+                    errors.push(error);
+                    continue;
+                }
+            };
+            if self.plugins.iter().any(|plugin| plugin.id == parsed.id) {
+                errors.push(format!(
+                    "Plugin {} is already loaded; skipped the copy in {}.",
+                    parsed.id,
+                    plugin_dir.display()
+                ));
+                continue;
+            }
+            for command in &parsed.commands {
+                if let Some(keys) = &command.keybinding {
+                    bindings.push(KeyBinding::new(
+                        keys,
+                        RunPluginCommand {
+                            command: command.id.clone(),
+                        },
+                        Some(key_context),
+                    ));
+                }
+            }
+            self.commands.extend(parsed.commands);
+            self.plugins.push(Plugin {
+                id: parsed.id,
+                name: parsed.name,
+                dir: plugin_dir,
+                run: parsed.run,
+                state: PluginState::Stopped,
+                pending: Vec::new(),
+                _start_task: Task::ready(()),
+                _pump_task: Task::ready(()),
+            });
+        }
+        cx.bind_keys(bindings);
+        eprintln!(
+            "pi-gpui: loaded {} plugin(s): {}",
+            self.plugins.len(),
+            self.plugins
+                .iter()
+                .map(|plugin| plugin.id.as_ref())
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        if !errors.is_empty() {
+            for error in &errors {
+                eprintln!("pi-gpui: plugin not loaded: {error}");
+            }
+            cx.emit(PluginEvent::Notify {
+                message: format!("Plugins not loaded: {}", errors.join("; ")),
+                color: Color::Warning,
+            });
+        }
+        cx.notify();
+    }
+
+    pub fn composer_commands(&self) -> impl Iterator<Item = &PluginCommand> {
+        self.commands.iter().filter(|command| command.in_composer)
+    }
+
+    pub fn is_command_active(&self, command: &str) -> bool {
+        self.active_commands.contains(command)
+    }
+
+    pub fn statuses(&self) -> &[StatusItem] {
+        &self.statuses
+    }
+
+    pub fn has_busy_status(&self) -> bool {
+        self.statuses.iter().any(|status| status.busy)
+    }
+
+    pub fn run_command(&mut self, command: &str, context: CommandContext, cx: &mut Context<Self>) {
+        let Some(plugin_id) = self
+            .commands
+            .iter()
+            .find(|candidate| candidate.id == command)
+            .map(|candidate| candidate.plugin_id.clone())
+        else {
+            return;
+        };
+        let message = json!({
+            "method": "command.run",
+            "params": {
+                "command": command,
+                "workspace": context.workspace,
+                "session": context.session,
+            },
+        });
+        self.send(&plugin_id, message, cx);
+    }
+
+    fn plugin_mut(&mut self, plugin_id: &str) -> Option<&mut Plugin> {
+        self.plugins
+            .iter_mut()
+            .find(|plugin| plugin.id == plugin_id)
+    }
+
+    /// Delivers `message`, starting the plugin first if it is not running.
+    fn send(&mut self, plugin_id: &SharedString, message: Value, cx: &mut Context<Self>) {
+        let Some(plugin) = self.plugin_mut(plugin_id) else {
+            return;
+        };
+        match &plugin.state {
+            PluginState::Running(process) => {
+                if let Err(error) = process.send(message) {
+                    let name = plugin.name.clone();
+                    self.notify(format!("Plugin \"{name}\" is unavailable: {error}"), cx);
+                }
+            }
+            PluginState::Starting => plugin.pending.push(message),
+            PluginState::Stopped => {
+                plugin.pending.push(message);
+                self.start(plugin_id.clone(), cx);
+            }
+        }
+    }
+
+    fn start(&mut self, plugin_id: SharedString, cx: &mut Context<Self>) {
+        let Some(plugin) = self.plugin_mut(&plugin_id) else {
+            return;
+        };
+        plugin.state = PluginState::Starting;
+        let directory = plugin.dir.clone();
+        let run = plugin.run.clone();
+        // Resolving `node` & co. can need a login shell, which takes a moment.
+        let resolve = cx.background_spawn(async move { resolve_program(&directory, &run) });
+        plugin._start_task = cx.spawn(async move |this, cx| {
+            let resolved = resolve.await;
+            this.update(cx, |this, cx| this.finish_start(plugin_id, resolved, cx))
+                .ok();
+        });
+    }
+
+    fn finish_start(
+        &mut self,
+        plugin_id: SharedString,
+        resolved: Result<(PathBuf, Vec<String>), String>,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(plugin) = self.plugin_mut(&plugin_id) else {
+            return;
+        };
+        let spawned = resolved.and_then(|(program, args)| {
+            let mut command = Command::new(&program);
+            command
+                .args(&args)
+                .current_dir(&plugin.dir)
+                .env("PATH", pi::path_with_executable_dir(&program))
+                .env("PI_GPUI_PLUGIN_DIR", &plugin.dir);
+            JsonlProcess::spawn(&mut command).map_err(|error| error.to_string())
+        });
+        match spawned {
+            Ok((process, receiver)) => {
+                eprintln!("pi-gpui: started plugin {plugin_id}");
+                let initialize = json!({
+                    "method": "initialize",
+                    "params": {
+                        "protocol": PROTOCOL_VERSION,
+                        "app": env!("CARGO_PKG_VERSION"),
+                        "plugin": { "id": plugin.id, "dir": plugin.dir },
+                    },
+                });
+                let mut failure = None;
+                for message in std::iter::once(initialize).chain(plugin.pending.drain(..)) {
+                    if let Err(error) = process.send(message) {
+                        failure = Some(error);
+                        break;
+                    }
+                }
+                plugin.state = PluginState::Running(process);
+                let pump_id = plugin_id.clone();
+                plugin._pump_task =
+                    cx.spawn(async move |this, cx| pump_plugin(this, pump_id, receiver, cx).await);
+                if let Some(error) = failure {
+                    let name = plugin.name.clone();
+                    self.notify(
+                        format!("Plugin \"{name}\" does not accept messages: {error}"),
+                        cx,
+                    );
+                }
+            }
+            Err(error) => {
+                plugin.state = PluginState::Stopped;
+                plugin.pending.clear();
+                let name = plugin.name.clone();
+                self.notify(format!("Could not start plugin \"{name}\": {error}"), cx);
+            }
+        }
+        cx.notify();
+    }
+
+    fn apply_messages(
+        &mut self,
+        plugin_id: &SharedString,
+        messages: Vec<JsonlMessage>,
+        cx: &mut Context<Self>,
+    ) {
+        for message in messages {
+            match message {
+                JsonlMessage::Record(record) => self.apply_record(plugin_id, &record, cx),
+                JsonlMessage::Malformed(line) => {
+                    eprintln!("pi-gpui: plugin {plugin_id} wrote non-JSON: {line}");
+                }
+                JsonlMessage::Exited {
+                    status,
+                    stderr_tail,
+                } => self.on_exited(plugin_id, status, stderr_tail, cx),
+            }
+        }
+        cx.notify();
+    }
+
+    fn apply_record(&mut self, plugin_id: &SharedString, record: &Value, cx: &mut Context<Self>) {
+        let params = &record["params"];
+        match record["method"].as_str().unwrap_or_default() {
+            "composer.insert" => cx.emit(PluginEvent::ComposerInsert {
+                text: params["text"].as_str().unwrap_or_default().to_string(),
+                replace_last: params["replaceLast"].as_bool().unwrap_or(false),
+                space_before: params["spaceBefore"].as_bool().unwrap_or(false),
+            }),
+            "composer.setText" => cx.emit(PluginEvent::ComposerSetText(
+                params["text"].as_str().unwrap_or_default().to_string(),
+            )),
+            "command.setState" => {
+                let Some(command) = params["command"].as_str() else {
+                    return;
+                };
+                // A plugin may only toggle its own commands.
+                let owned = self
+                    .commands
+                    .iter()
+                    .any(|candidate| candidate.id == command && candidate.plugin_id == *plugin_id);
+                if !owned {
+                    return;
+                }
+                if params["active"].as_bool().unwrap_or(false) {
+                    self.active_commands
+                        .insert(SharedString::from(command.to_string()));
+                } else {
+                    self.active_commands.remove(command);
+                }
+            }
+            "status.set" => {
+                let Some(id) = params["id"].as_str() else {
+                    return;
+                };
+                let item = StatusItem {
+                    plugin_id: plugin_id.clone(),
+                    id: SharedString::from(id.to_string()),
+                    text: sessions::one_line(params["text"].as_str().unwrap_or_default(), 60)
+                        .into(),
+                    color: tone_color(params["tone"].as_str()),
+                    busy: params["busy"].as_bool().unwrap_or(false),
+                };
+                match self
+                    .statuses
+                    .iter_mut()
+                    .find(|status| status.plugin_id == *plugin_id && status.id == id)
+                {
+                    Some(existing) => *existing = item,
+                    None => self.statuses.push(item),
+                }
+            }
+            "status.clear" => {
+                let id = params["id"].as_str().unwrap_or_default();
+                self.statuses
+                    .retain(|status| !(status.plugin_id == *plugin_id && status.id == id));
+            }
+            "notify" => cx.emit(PluginEvent::Notify {
+                message: params["message"].as_str().unwrap_or_default().to_string(),
+                color: tone_color(params["tone"].as_str()),
+            }),
+            "log" => eprintln!(
+                "pi-gpui: plugin {plugin_id}: {}",
+                params["message"].as_str().unwrap_or_default()
+            ),
+            // Unknown methods are ignored so the protocol can grow.
+            _ => {}
+        }
+    }
+
+    fn on_exited(
+        &mut self,
+        plugin_id: &SharedString,
+        status: Option<std::process::ExitStatus>,
+        stderr_tail: String,
+        cx: &mut Context<Self>,
+    ) {
+        // Whatever the plugin showed belongs to the process that just ended.
+        self.statuses.retain(|item| item.plugin_id != *plugin_id);
+        let owned: Vec<SharedString> = self
+            .commands
+            .iter()
+            .filter(|command| command.plugin_id == *plugin_id)
+            .map(|command| command.id.clone())
+            .collect();
+        for command in owned {
+            self.active_commands.remove(&command);
+        }
+        let Some(plugin) = self.plugin_mut(plugin_id) else {
+            return;
+        };
+        plugin.state = PluginState::Stopped;
+        let name = plugin.name.clone();
+        eprintln!("pi-gpui: plugin {plugin_id} exited ({status:?})");
+        if status.is_some_and(|status| !status.success()) {
+            let details = stderr_tail.lines().last().unwrap_or_default().to_string();
+            self.notify(
+                format!("Plugin \"{name}\" stopped with an error. {details}"),
+                cx,
+            );
+        }
+    }
+
+    fn notify(&mut self, message: String, cx: &mut Context<Self>) {
+        eprintln!("pi-gpui: {message}");
+        cx.emit(PluginEvent::Notify {
+            message,
+            color: Color::Error,
+        });
+    }
+}
+
+async fn pump_plugin(
+    this: WeakEntity<PluginRegistry>,
+    plugin_id: SharedString,
+    mut receiver: mpsc::Receiver<JsonlMessage>,
+    cx: &mut AsyncApp,
+) {
+    while let Some(first) = receiver.next().await {
+        let mut batch = vec![first];
+        while batch.len() < MAX_MESSAGES_PER_UPDATE {
+            match receiver.try_next() {
+                Ok(Some(message)) => batch.push(message),
+                _ => break,
+            }
+        }
+        if this
+            .update(cx, |this, cx| this.apply_messages(&plugin_id, batch, cx))
+            .is_err()
+        {
+            return;
+        }
+    }
+}
+
+/// Reads every manifest. Blocking; runs on a background thread.
+fn discover_plugins() -> Vec<Result<(PathBuf, ParsedManifest), String>> {
+    let mut found = Vec::new();
+    for directory in plugin_directories() {
+        let Ok(entries) = fs::read_dir(&directory) else {
+            continue;
+        };
+        let mut plugin_dirs: Vec<PathBuf> = entries
+            .flatten()
+            .map(|entry| entry.path())
+            .filter(|path| path.join("plugin.json").is_file())
+            .collect();
+        plugin_dirs.sort();
+        for plugin_dir in plugin_dirs {
+            found.push(
+                parse_manifest(&plugin_dir)
+                    .map(|parsed| (plugin_dir.clone(), parsed))
+                    .map_err(|error| format!("{}: {error}", plugin_dir.display())),
+            );
+        }
+    }
+    found
+}
+
+/// User plugins first, then built-in ones: `Contents/Resources/plugins` in
+/// the app bundle, or the repository's `plugins/` when run from a build.
+fn plugin_directories() -> Vec<PathBuf> {
+    let mut directories = Vec::new();
+    if let Some(home) = sessions::home_directory() {
+        directories.push(if cfg!(target_os = "macos") {
+            home.join("Library/Application Support/pi-gpui/plugins")
+        } else {
+            home.join(".config/pi-gpui/plugins")
+        });
+    }
+    let bundled = std::env::current_exe().ok().and_then(|executable| {
+        let contents = executable.parent()?.parent()?;
+        let resources = contents.join("Resources/plugins");
+        (contents.file_name()? == "Contents" && resources.is_dir()).then_some(resources)
+    });
+    directories.push(
+        bundled.unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/plugins"))),
+    );
+    directories
+}
+
+struct ParsedManifest {
+    id: SharedString,
+    name: SharedString,
+    run: Vec<String>,
+    commands: Vec<PluginCommand>,
+}
+
+fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
+    let bytes = fs::read(directory.join("plugin.json")).map_err(|error| error.to_string())?;
+    let manifest: Value =
+        serde_json::from_slice(&bytes).map_err(|error| format!("plugin.json: {error}"))?;
+
+    let id = manifest["id"].as_str().unwrap_or_default();
+    if id.is_empty()
+        || !id
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "-_.".contains(character))
+    {
+        return Err("id: use ASCII letters, digits, - _ .".to_string());
+    }
+    let protocol = manifest["protocol"].as_u64();
+    if protocol != Some(PROTOCOL_VERSION) {
+        return Err(format!(
+            "written for plugin protocol {}, but this app speaks protocol {PROTOCOL_VERSION}",
+            protocol.map_or_else(|| "?".to_string(), |protocol| protocol.to_string())
+        ));
+    }
+    let run: Vec<String> = manifest["run"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(|part| part.as_str().map(str::to_string))
+        .collect();
+    if run.is_empty() {
+        return Err("run: a program to start is required".to_string());
+    }
+
+    let id = SharedString::from(id.to_string());
+    let mut commands = Vec::new();
+    for command in manifest["contributes"]["commands"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let command_id = command["id"].as_str().unwrap_or_default();
+        if !command_id.starts_with(&format!("{id}.")) {
+            return Err(format!(
+                "command \"{command_id}\" must start with \"{id}.\""
+            ));
+        }
+        let keybinding = match command["keybinding"].as_str() {
+            Some(keys) => {
+                for keystroke in keys.split_whitespace() {
+                    Keystroke::parse(keystroke)
+                        .map_err(|_| format!("invalid keybinding \"{keys}\""))?;
+                }
+                Some(SharedString::from(keys.to_string()))
+            }
+            None => None,
+        };
+        commands.push(PluginCommand {
+            id: SharedString::from(command_id.to_string()),
+            plugin_id: id.clone(),
+            title: SharedString::from(command["title"].as_str().unwrap_or(command_id).to_string()),
+            icon: command["icon"]
+                .as_str()
+                .and_then(IconName::from_plugin_name)
+                .unwrap_or(IconName::Tool),
+            keybinding,
+            in_composer: command["placement"]
+                .as_array()
+                .is_some_and(|places| places.iter().any(|place| place == "composer")),
+        });
+    }
+
+    Ok(ParsedManifest {
+        name: SharedString::from(manifest["name"].as_str().unwrap_or(&id).to_string()),
+        id,
+        run,
+        commands,
+    })
+}
+
+/// `./program` is relative to the plugin folder; plain names are looked up
+/// like `pi` (PATH, then the login shell, which finds nvm's `node`).
+fn resolve_program(directory: &Path, run: &[String]) -> Result<(PathBuf, Vec<String>), String> {
+    let (program, args) = run.split_first().ok_or("empty run command")?;
+    let path = if program.starts_with("./") || program.starts_with("../") {
+        directory.join(program)
+    } else if Path::new(program).is_absolute() {
+        PathBuf::from(program)
+    } else {
+        pi::find_executable(program).ok_or_else(|| format!("program \"{program}\" not found"))?
+    };
+    if !path.is_file() {
+        return Err(format!("no such file: {}", path.display()));
+    }
+    Ok((path, args.to_vec()))
+}
+
+fn tone_color(tone: Option<&str>) -> Color {
+    match tone {
+        Some("error") => Color::Error,
+        Some("warning") => Color::Warning,
+        Some("success") => Color::Success,
+        Some("info") => Color::Accent,
+        _ => Color::Muted,
+    }
+}
+
+/// `cmd-shift-d` → `⌘⇧D`, for tooltips.
+pub fn display_keys(keys: &str) -> String {
+    keys.split_whitespace()
+        .map(|keystroke| {
+            keystroke
+                .split('-')
+                .map(|part| match part {
+                    "cmd" => "⌘".to_string(),
+                    "shift" => "⇧".to_string(),
+                    "alt" => "⌥".to_string(),
+                    "ctrl" => "⌃".to_string(),
+                    "enter" => "↩".to_string(),
+                    "space" => "Space".to_string(),
+                    key => key.to_uppercase(),
+                })
+                .collect::<String>()
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn write_manifest(directory: &Path, manifest: Value) {
+        fs::create_dir_all(directory).expect("plugin dir");
+        fs::write(directory.join("plugin.json"), manifest.to_string()).expect("manifest");
+    }
+
+    #[test]
+    fn manifest_validation() {
+        let root = std::env::temp_dir().join(format!("pi-gpui-plugins-{}", std::process::id()));
+
+        let good = root.join("good");
+        write_manifest(
+            &good,
+            json!({
+                "id": "demo", "name": "Demo", "protocol": PROTOCOL_VERSION, "run": ["./demo"],
+                "contributes": { "commands": [
+                    { "id": "demo.go", "title": "Go", "icon": "microphone",
+                      "keybinding": "cmd-shift-d", "placement": ["composer"] }
+                ]}
+            }),
+        );
+        let parsed = parse_manifest(&good).expect("valid manifest");
+        assert_eq!(parsed.commands.len(), 1);
+        assert!(parsed.commands[0].in_composer);
+        assert_eq!(parsed.commands[0].icon, IconName::Microphone);
+
+        let wrong_protocol = root.join("wrong-protocol");
+        write_manifest(
+            &wrong_protocol,
+            json!({ "id": "x", "protocol": 99, "run": ["x"] }),
+        );
+        assert!(parse_manifest(&wrong_protocol).is_err());
+
+        let foreign_command = root.join("foreign-command");
+        write_manifest(
+            &foreign_command,
+            json!({ "id": "x", "protocol": PROTOCOL_VERSION, "run": ["x"],
+                    "contributes": { "commands": [{ "id": "other.go" }] } }),
+        );
+        assert!(parse_manifest(&foreign_command).is_err());
+
+        fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn keys_are_displayed_like_macos() {
+        assert_eq!(display_keys("cmd-shift-d"), "⌘⇧D");
+    }
+}

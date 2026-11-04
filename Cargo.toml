@@ -1,0 +1,29 @@
+[package]
+name = "pi-gpui"
+# The app's own version; supported pi versions are in src/pi.rs (MIN_PI, TESTED_PI).
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+# runtime_shaders: compile Metal shaders at startup instead of requiring the
+# separately downloaded Metal Toolchain (`xcrun metal`) at build time.
+gpui = { version = "=0.2.2", features = ["runtime_shaders"] }
+futures = "0.3"
+serde_json = "1"
+unicode-segmentation = "1"
+# Both already come with gpui; used to drag the window by our own title bar.
+raw-window-handle = "0.6"
+pulldown-cmark = { version = "0.13.6", default-features = false }
+syntect = { version = "5.3.0", default-features = false, features = ["parsing", "regex-fancy"] }
+two-face = { version = "0.5.2", default-features = false, features = ["syntect-fancy"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc = "0.2"
+
+[profile.dev]
+# GPUI is slow in unoptimized builds; optimize dependencies, keep our code debuggable.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3

@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How pi-gui works</title>
+<style>
+:root{color-scheme:light;--bg:#f5f5f2;--ink:#202821;--muted:#687168;--line:#dce1d9;--blue:#315be8;--bluebg:#edf1ff;--green:#2c7052;--greenbg:#edf6ef;--orange:#98611d;--orangebg:#fff5e4}*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.55 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}button,input{font:inherit}button{cursor:pointer}button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible{outline:3px solid var(--blue);outline-offset:4px}button{color:inherit}main{max-width:1120px;margin:auto;padding:38px 28px 24px}header{display:flex;justify-content:space-between;align-items:center;gap:20px;margin-bottom:28px}.eyebrow{font-size:11px;font-weight:650;letter-spacing:1.5px;text-transform:uppercase;color:var(--muted)}h1{font-size:clamp(30px,5vw,46px);letter-spacing:-1.8px;line-height:1.15;margin:9px 0 10px}header p{margin:0;color:var(--muted);font-size:15px}.badge{border:1px solid var(--line);border-radius:30px;padding:8px 14px;font-size:12px;white-space:nowrap}.badge:before{content:"";display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--green);margin-right:8px}.tabs{display:flex;gap:5px;border-bottom:1px solid var(--line);margin-bottom:24px;overflow:auto}.tabs button{border:0;border-bottom:2px solid transparent;background:none;white-space:nowrap;padding:13px 16px;font-size:14px;color:var(--muted)}.tabs button[aria-selected=true]{color:var(--blue);border-bottom-color:var(--blue)}.tabs span{font:11px ui-monospace,monospace;opacity:.65;margin-right:8px}[hidden]{display:none!important}.panel{animation:appear .24s ease}.section-head{display:flex;align-items:flex-start;justify-content:space-between;gap:20px;margin-bottom:19px}h2{margin:0 0 6px;font-size:25px;line-height:1.25;letter-spacing:-.7px}.section-head p{margin:0;color:var(--muted);max-width:710px;font-size:14px}.pill{display:inline-block;border-radius:30px;padding:4px 10px;font-size:11px;background:var(--greenbg);color:var(--green);white-space:nowrap}.pill.idea{color:var(--blue);background:var(--bluebg)}.card{background:white;border:1px solid var(--line);border-radius:17px;padding:22px}.architecture{display:grid;grid-template-columns:1fr 60px 1.5fr 60px .8fr;align-items:stretch}.boundary{border:1px dashed #bbc5b9;border-radius:13px;padding:14px;display:flex;flex-direction:column;gap:10px}.boundary-label{font-size:10px;letter-spacing:1px;color:var(--muted);text-transform:uppercase;margin-bottom:4px}.node{display:block;text-align:left;border:1px solid var(--line);border-radius:10px;background:#fff;padding:14px 12px;transition:background .2s,border-color .2s,box-shadow .2s;min-height:74px;width:100%}.node b{display:block;font-size:15px;font-weight:600}.node small{display:block;font-size:11px;line-height:1.5;color:var(--muted);margin-top:4px}.node:hover{border-color:var(--blue)}.node.active{background:var(--bluebg);border-color:var(--blue);box-shadow:0 0 0 3px #315be810}.node.selected{border-color:var(--green);background:var(--greenbg)}.node.active.selected{background:var(--bluebg);border-color:var(--blue)}.connector{display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;color:var(--muted);font:10px ui-monospace,monospace}.wire{height:2px;width:100%;position:relative;background:var(--line)}.wire:after{content:"";position:absolute;top:-3px;right:1px;border-left:5px solid #aab3a5;border-top:4px solid transparent;border-bottom:4px solid transparent}.packet{position:absolute;left:0;top:-3px;width:8px;height:8px;background:var(--blue);border-radius:50%;opacity:0}.running .packet{animation:travel 1.1s ease-in-out infinite}.running.returning .packet{animation-direction:reverse}.aside-nodes{display:flex;flex-direction:column;gap:10px;padding-top:30px}.detail{margin-top:16px;padding:14px 16px;border-radius:10px;background:#f5f7f3;min-height:81px;font-size:13px}.detail strong{display:block;font-size:13px;margin-bottom:4px}.detail p{margin:0;color:var(--muted)}.transport{font:11px ui-monospace,monospace;color:var(--muted);margin:13px 0 0}.controls{display:flex;align-items:center;gap:8px;margin:18px 0 12px}.btn{border:1px solid var(--line);background:white;padding:8px 13px;border-radius:8px;font-size:12px;min-height:37px}.btn.primary{background:var(--ink);color:white;border-color:var(--ink)}.btn:hover{filter:brightness(.96)}.step-count{margin-left:auto;font:11px ui-monospace,monospace;color:var(--muted)}.step-copy{min-height:76px;font-size:14px}.step-copy b{display:block;margin-bottom:4px}.step-copy p{margin:0;color:var(--muted)}.progress{display:flex;gap:5px;margin-top:12px}.progress button{border:0;border-radius:4px;height:5px;background:var(--line);flex:1;padding:0;position:relative}.progress button:before{content:"";position:absolute;inset:-7px 0}.progress button.on{background:var(--blue)}.note{font-size:13px;color:var(--muted);padding:14px 0 0;margin:0}.note strong{color:var(--ink);font-weight:600}.two-col{display:grid;grid-template-columns:1fr 1fr;gap:18px}h3{font-size:16px;margin:0 0 10px;letter-spacing:-.2px}p{margin:0 0 12px}code{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:.85em;overflow-wrap:anywhere}.storage-list{display:grid;gap:12px;font-size:13px}.storage-row{border-bottom:1px solid #edf0e9;padding-bottom:10px}.storage-row:last-child{border:0;padding:0}.storage-row b{display:block;font-weight:550}.storage-row small{color:var(--muted);font-size:12px}.tree{height:175px;width:100%;display:block}.tree line,.tree path{stroke:#d4dbd0;stroke-width:2;fill:none}.tree .branch-hot{stroke:var(--blue);stroke-dasharray:5 5;animation:dash 1s linear infinite}.tree circle{fill:white;stroke:#c2ccbb;stroke-width:2}.tree .hot{fill:var(--bluebg);stroke:var(--blue)}.tree text{font:12px -apple-system,sans-serif;fill:var(--muted)}.tree .label-hot{fill:var(--blue);font-weight:600}.switches{display:flex;gap:7px;margin-bottom:13px}.switches .btn[aria-pressed=true]{background:var(--bluebg);border-color:#b8c7ff;color:var(--blue)}.small{font-size:13px;color:var(--muted)}.context-preview{padding:12px;border-radius:8px;background:var(--bluebg);color:var(--blue);font:12px ui-monospace,monospace;min-height:61px}.insights{display:grid;grid-template-columns:repeat(3,1fr);gap:13px;margin-bottom:16px}.insight{border:1px solid var(--line);border-radius:12px;background:white;padding:17px}.insight .num{font:24px ui-monospace,monospace;letter-spacing:-1px;margin-bottom:8px}.insight p{font-size:12px;color:var(--muted);margin:0}.insight strong{font-size:13px;display:block;margin-bottom:6px}.perf-grid{display:grid;grid-template-columns:1.15fr 1fr;gap:18px}.risk{padding:12px 0;border-bottom:1px solid var(--line)}.risk:first-of-type{padding-top:0}.risk:last-child{border:0;padding-bottom:0}.risk b{font-size:13px;display:block}.risk p{font-size:12px;color:var(--muted);margin:4px 0 0}.viewport-demo{display:grid;grid-template-columns:repeat(10,1fr);gap:5px;margin:20px 0 15px}.row-dot{height:18px;border:1px solid #e0e5dc;border-radius:3px;background:#f6f8f4;transition:background .25s,border-color .25s}.row-dot.drawn{background:#bdcdfc;border-color:#8ca9f8}.demo-caption{font:12px ui-monospace,monospace;color:var(--blue);min-height:20px}.toggle-label{display:flex;align-items:center;gap:9px;font-size:13px;cursor:pointer}.toggle-label input{accent-color:var(--blue);width:16px;height:16px}.warning{border-left:3px solid #c18e42;background:var(--orangebg);border-radius:0 8px 8px 0;padding:12px 15px;font-size:12px;margin-top:16px;color:#735122}.migration{display:grid;grid-template-columns:1fr 70px 1.5fr;align-items:center;margin-bottom:18px}.migration .block{padding:22px;border-radius:12px;border:1px solid var(--line);background:#fafbf8}.migration .block.front{background:var(--bluebg);border-color:#c5d1fc}.migration h3{margin-bottom:7px}.migration p{font-size:12px;margin:0;color:var(--muted)}.migration small{font-size:10px}.checklist{list-style:none;padding:0;margin:0;display:grid;gap:12px}.checklist li{font-size:13px;padding-left:19px;position:relative}.checklist li:before{content:"";position:absolute;left:0;top:7px;width:6px;height:6px;background:var(--green);border-radius:50%}.checklist li span{display:block;color:var(--muted);font-size:12px;margin-top:3px}footer{margin-top:25px;color:var(--muted);font-size:11px;display:flex;justify-content:space-between;gap:15px}footer button{border:0;background:none;text-decoration:underline;color:var(--muted);font-size:11px;padding:0}.sources{margin-top:20px;font-size:12px}.sources h2{font-size:21px}.sources p{color:var(--muted)}details{border-top:1px solid var(--line);padding:12px 0}summary{cursor:pointer;font-weight:550}pre{font:11px/1.6 ui-monospace,monospace;white-space:pre-wrap;overflow-wrap:anywhere;background:#f3f5ef;border-radius:8px;padding:12px;color:#42523a}a{color:var(--blue)}@keyframes appear{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}@keyframes travel{0%{left:0;opacity:0}20%{opacity:1}80%{opacity:1}100%{left:calc(100% - 8px);opacity:0}}@keyframes dash{to{stroke-dashoffset:-10}}@media(max-width:760px){main{padding:22px 16px}header{display:block}.badge{display:inline-block;margin-top:15px}.tabs button{padding:12px 10px}.tabs span{display:none}.architecture{grid-template-columns:1fr 30px 1.3fr}.aside-nodes{grid-column:1/-1;flex-direction:row;padding-top:13px}.architecture>.connector.cloud{display:none}.two-col,.perf-grid{grid-template-columns:1fr}.card{padding:16px}.insights{gap:7px}.insight{padding:12px}.insight .num{font-size:21px}.migration{grid-template-columns:1fr;gap:12px}.migration>.connector{height:28px}.migration>.connector .wire{width:60px}.section-head{display:block}.section-head>.pill{margin-top:10px}.node{padding:11px 9px}.node b{font-size:13px}.boundary{padding:10px}.connector{font-size:9px}.transport{font-size:10px}.step-copy{min-height:110px}footer{flex-wrap:wrap}}@media(prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important;transition:none!important}}@media print{body{background:white}.panel[hidden]{display:block!important}.tabs,.controls,.progress,footer button{display:none}.panel{break-before:page}.panel:first-of-type{break-before:auto}.sources[hidden]{display:block!important}main{max-width:none;padding:0}.card{break-inside:avoid}header{margin-bottom:20px}}
+</style>
+</head>
+<body>
+<main>
+<header><div><div class="eyebrow">A study of the installed app · about 4 minutes</div><h1>How pi-gui works</h1><p>Where the agent lives, how the chat updates and what to change for GPUI.</p></div><div class="badge">pi-gui 1.0.1 · local build</div></header>
+<nav class="tabs" role="tablist" aria-label="Architecture sections">
+<button id="tab-map" role="tab" aria-selected="true" aria-controls="map" data-tab="map"><span>01</span>Map and flow</button>
+<button id="tab-memory" role="tab" aria-selected="false" aria-controls="memory" tabindex="-1" data-tab="memory"><span>02</span>History and state</button>
+<button id="tab-speed" role="tab" aria-selected="false" aria-controls="speed" tabindex="-1" data-tab="speed"><span>03</span>Where it may be slow</button>
+<button id="tab-port" role="tab" aria-selected="false" aria-controls="port" tabindex="-1" data-tab="port"><span>04</span>Moving to GPUI</button>
+</nav>
+<section id="map" class="panel" role="tabpanel" aria-labelledby="tab-map">
+<div class="section-head"><div><h2>The agent runs inside the Electron main process</h2><p>React draws the window. DesktopAppStore runs the app. PiSdkDriver calls pi directly through the SDK, without a separate CLI process.</p></div><span class="pill">Confirmed in code</span></div>
+<div class="card">
+<div class="architecture" id="architecture">
+<div class="boundary"><div class="boundary-label">Renderer · Chromium</div><button class="node" data-node="ui"><b>React + DOM</b><small>Chat, input, Markdown,<br>virtualized list</small></button><button class="node" data-node="bridge"><b>Preload bridge</b><small>window.piApp<br>Isolated access to IPC</small></button></div>
+<div class="connector"><span>IPC</span><div class="wire"><i class="packet"></i></div><span>↔</span></div>
+<div class="boundary"><div class="boundary-label">Main · Electron / Node.js</div><button class="node" data-node="store"><b>DesktopAppStore</b><small>State, chat cache, tasks and windows</small></button><button class="node" data-node="driver"><b>PiSdkDriver → pi SDK</b><small>SessionSupervisor: sessions and events<br>RuntimeSupervisor: models and resources</small></button></div>
+<div class="connector cloud"><span>API / I/O</span><div class="wire"><i class="packet"></i></div><span>↔</span></div>
+<div class="aside-nodes"><button class="node" data-node="model"><b>Model</b><small>API of the selected provider</small></button><button class="node" data-node="tools"><b>Tools</b><small>Files, shell,<br>extensions</small></button></div>
+</div>
+<div class="detail" id="node-detail" aria-live="polite"><strong>Click a block to see its role</strong><p>Frames are processes. Preload lives on the renderer side. Chromium helper processes are omitted.</p></div>
+<p class="transport">The animation shows the order of steps. Speed and packet sizes are illustrative.</p>
+<div class="controls"><button class="btn primary" id="play">▶ Show the request path</button><button class="btn" id="next">Next step →</button><button class="btn" id="reset" aria-label="Reset the animation">↺</button><span class="step-count" id="step-count">1 / 6</span></div>
+<div class="step-copy" id="step-copy" aria-live="polite"></div><div class="progress" id="progress" aria-label="Request steps"></div>
+</div>
+<p class="note"><strong>Key boundary:</strong> the interface has no direct access to Node.js. Commands go through preload and validated IPC handlers. The agent, extensions and app management share the main JS process.</p>
+</section>
+<section id="memory" class="panel" role="tabpanel" aria-labelledby="tab-memory" hidden>
+<div class="section-head"><div><h2>History on disk and the chat on screen are different things</h2><p>pi stores a tree of events. DesktopAppStore builds a view of it for the interface, and the renderer receives separate snapshots of state and the transcript.</p></div></div>
+<div class="two-col">
+<div class="card"><h3>Two data owners</h3><div class="storage-list">
+<div class="storage-row"><b>pi: history and model context</b><code>~/.pi/agent/sessions/…/*.jsonl</code><br><small>Messages, tool results, branches, compaction. Managed by SessionManager.</small></div>
+<div class="storage-row"><b>pi: settings and model access</b><code>~/.pi/agent/</code><br><small>Including settings.json, models.json, auth.json. A project adds its own resources from .pi/.</small></div>
+<div class="storage-row"><b>pi-gui: app state</b><code>Electron userData/</code><br><small>catalogs.json, ui-state.json, scheduled-tasks.json, attachments and checkpoints.</small></div>
+</div><p class="note">The catalog stores the session list and file paths. It does not replace the JSONL history. The selected chat can differ between windows; WindowOwner handles that.</p></div>
+<div class="card"><h3>The model sees the active branch</h3><div class="switches"><button class="btn" data-branch="a" aria-pressed="true">Branch A</button><button class="btn" data-branch="b" aria-pressed="false">Branch B</button></div>
+<svg class="tree" viewBox="0 0 420 175" role="img" aria-label="A shared question splits into two history branches"><path class="branch-hot" d="M50 90 L170 90"/><path id="path-a" d="M170 90 L300 40"/><path id="path-b" d="M170 90 L300 140"/><circle class="hot" cx="50" cy="90" r="9"/><circle class="hot" cx="170" cy="90" r="9"/><circle id="circle-a" cx="300" cy="40" r="9"/><circle id="circle-b" cx="300" cy="140" r="9"/><text x="15" y="120">Question</text><text x="130" y="120">Answer</text><text id="label-a" x="320" y="45">Plan A</text><text id="label-b" x="320" y="145">Plan B</text></svg>
+<div class="context-preview" id="context-preview" aria-live="polite"></div><p class="note">Switching branches keeps the old entries. Compaction puts a short summary into future model requests and keeps the original history.</p></div>
+</div>
+<p class="note"><strong>When switching chats:</strong> the UI changes the selection first and loads the transcript afterwards. sessionId and revision checks protect against stale responses. A new client has to keep this logic.</p>
+</section>
+<section id="speed" class="panel" role="tabpanel" aria-labelledby="tab-speed" hidden>
+<div class="section-head"><div><h2>The optimizations exist. The data path is what remains</h2><p>Below are facts from the code and places to profile. There are no CPU, frame or latency measurements of this app here.</p></div><span class="pill idea">Not a diagnosis</span></div>
+<div class="insights"><div class="insight"><div class="num">50 ms</div><strong>Batched publishing</strong><p>Text deltas are combined before a UI update. This does not limit all events.</p></div><div class="insight"><div class="num">720 px</div><strong>Virtual list overscan</strong><p>Normally only visible rows and a small margin are in the DOM.</p></div><div class="insight"><div class="num">memo</div><strong>Re-renders are reduced</strong><p>Rows and Markdown are memoized. New text still needs work.</p></div></div>
+<div class="perf-grid">
+<div class="card"><h3>What to check first</h3><div class="risk"><b>1. Copying and IPC</b><p>On every text delta, main copies the transcript array and searches for the active message. A batched publish sends the whole transcript of the selected chat, not just the new text.</p></div><div class="risk"><b>2. Markdown and geometry</b><p>Changed text goes through a synchronous Markdown parser in full. ResizeObserver measures row heights; a width change triggers flushSync and another layout.</p></div><div class="risk"><b>3. A shared main process</b><p>The SDK, extension handlers and the store run in one JS process. Heavy synchronous work there delays command handling. Its share still needs measuring.</p></div></div>
+<div class="card"><h3>Search changes how rows render</h3><label class="toggle-label"><input type="checkbox" id="search-demo">Open chat search</label><div class="viewport-demo" id="viewport-demo" aria-hidden="true"></div><div class="demo-caption" id="demo-caption" aria-live="polite"></div><p class="note">Blue cells are rows in the DOM. In search mode the code takes the whole layout instead of visibleRows. That can sharply increase rendering work.</p><p class="small" style="margin:12px 0 0">The 60 cells are illustrative. This shows behavior, it is not a benchmark.</p></div>
+</div>
+<div class="warning">Moving to GPUI removes React/DOM from the main interface. Copying history, expensive parsing and an overloaded event queue still need their own fixes. Using the GPU does not by itself explain or remove every delay.</div>
+</section>
+<section id="port" class="panel" role="tabpanel" aria-labelledby="tab-port" hidden>
+<div class="section-head"><div><h2>Replace the interface, keep the pi engine</h2><p>For a first prototype, separate the agent from the window. Below is the proposed architecture; current pi-gui has no such split.</p></div><span class="pill idea">Proposal</span></div>
+<div class="card"><div class="migration"><div class="block front"><div class="eyebrow">Process 1 · Rust</div><h3>GPUI client</h3><p>Window, input, virtualized chat.<br>Applies deltas by message ID.</p></div><div class="connector"><span>JSONL</span><div class="wire"></div><span>↔</span></div><div class="block"><div class="eyebrow">Process 2 · Node.js</div><h3>pi --mode rpc</h3><p>Agent, models, tools, sessions and TypeScript extensions.<br>Commands over stdin, events over stdout.</p></div></div>
+<p class="small" style="margin:0">pi already has RPC. To keep more of pi-gui logic, a custom Node host on top of PiSdkDriver is possible; its protocol, catalogs and task management would then have to be extracted from the app.</p></div>
+<div class="two-col" style="margin-top:18px"><div class="card"><h3>Can stay in pi</h3><ul class="checklist"><li>Agent loop and providers<span>Authentication, model requests, tool calls, retry and compaction.</span></li><li>JSONL sessions and resources<span>History, skills and extension logic. Compatibility of their UI is checked separately.</span></li><li>Run lifecycle<span>Treat work as finished on agent_settled. agent_end can be intermediate.</span></li></ul></div><div class="card"><h3>Needs to be built or adapted</h3><ul class="checklist"><li>Desktop features<span>Windows, catalogs, background chats, schedules, Git, terminal and drafts do not come from pi RPC automatically.</span></li><li>Extension UI<span>Dialogs need an adapter. HTML panels live in a sandboxed iframe today; they need a webview or a new interface.</span></li><li>A new update path<span>A snapshot on open, then deltas. Bounded queues, a layout cache and parsing off the UI thread.</span></li></ul></div></div>
+<p class="note"><strong>First test:</strong> open a long history, scroll it while the model generates and resize the window. Compare input latency, frame time and transferred data with pi-gui.</p>
+</section>
+<footer><span>Source: the installed app.asar, not an assumed upstream architecture.</span><button id="sources-toggle" aria-expanded="false" aria-controls="sources">Code and evidence ↗</button></footer>
+<section id="sources" class="sources card" hidden>
+<h2>Evidence</h2><p>Paths below are relative to <code>/Applications/pi-gui.app/Contents/Resources/app.asar</code>. Line numbers refer to the extracted installed build. No personal session data was used.</p>
+<p><code>SHA-256: 53cbf6cefbd3b74ba38535f87f4e42ff816faec725c9a9212d18d60085ab86cc</code></p>
+<details><summary>01. Processes, SDK and bridge</summary><pre>out/main/main.js:7175-7193
+  new node.JsonCatalogStore({ catalogFilePath });
+  this.driver = new piSdkDriver.PiSdkDriver(driverOptions);
+
+out/main/main.js:21863-21886
+  new electron.BrowserWindow({ webPreferences: {
+    preload: ...,
+    contextIsolation: true,
+    nodeIntegration: false,
+    sandbox: true
+  }});
+
+out/preload/preload.js:177 onward
+  contextBridge.exposeInMainWorld("piApp", { ... });
+  getState: () => ipcRenderer.invoke(desktopIpc.stateRequest)
+
+node_modules/@pi-gui/pi-sdk-driver/src/pi-sdk-driver.ts
+  SessionSupervisor + RuntimeSupervisor
+node_modules/@pi-gui/pi-sdk-driver/src/npm-package-fallback.ts
+  import { createAgentSessionRuntime, ... }
+    from "@earendil-works/pi-coding-agent";</pre></details>
+<details><summary>02. Deltas, 50 ms and the full transcript over IPC</summary><pre>out/main/main.js:752-775 · appendAssistantDelta
+  const transcript = [...transcriptCache.get(key) ?? []];
+  const index = transcript.findIndex(message => message.id === activeId);
+  transcript[index] = { ...current, text: `${current.text}${text}` };
+
+out/main/main.js:1197-1259 · StreamingUiPublisher
+  const STREAMING_UI_PUBLISH_INTERVAL_MS = 50;
+  // assistantDelta and repeated running sessionUpdated are deferred.
+
+out/main/main.js:9498-9637 · handleSessionEvent
+  // Applies the event first, then decides whether to defer publishing.
+
+out/main/main.js:10002-10010 · buildSelectedTranscriptRecord
+  return { workspaceId, sessionId,
+    transcript: this.sessionState.transcriptCache.get(key) ?? [] };
+
+out/main/main.js:11112-11133 · publishTranscript
+  // Skips a repeat if transcript and schemaInfo references did not change.
+  window.webContents.send(desktopIpc.selectedTranscriptChanged, payload);</pre><p>This is the full array of the displayed transcript, not the whole JSONL file with all branches. Overall app state is published on a separate channel.</p></details>
+<details><summary>03. Virtualization, search and Markdown</summary><pre>out/renderer/assets/index-D0YKEDn2.js:14896-15280
+  const TIMELINE_OVERSCAN = 720;
+  layoutRows(...) → items.map(...)
+  visibleRows(...) → rows.filter(...)
+  const placements = searchMode ? layout : visibleRows(...);
+  // ResizeObserver, getBoundingClientRect, flushSync on width change.
+  const MAX_SYNC_LAYOUT_PASSES = 8;
+
+Same file:59614-59857
+  ConversationTimeline → viewport.visibleRows.map(...)
+  MeasuredTimelineItem = reactExports.memo(...)
+
+Same file:61126 and 61131
+  // Open / close search:
+  setSearchMode(true); / setSearchMode(false);
+
+Same file:59160-59174 and 35380-35383
+  MessageMarkdown = reactExports.memo(...)
+  Markdown({ ..., children: text })
+  processor.runSync(processor.parse(file), file)</pre><p>These operations are confirmed to exist. Their share of real slowness is unknown without a profile.</p></details>
+<details><summary>04. Storage, branches and UI consistency</summary><pre>out/main/main.js:7175-7193
+  userData/catalogs.json
+  userData/ui-state.json
+  userData/scheduled-tasks.json
+
+out/main/main.js:10002-10010, 11085-11133
+  buildSelectedTranscriptRecord, WindowOwner.projectState, publishTranscript
+
+out/renderer/assets/index-D0YKEDn2.js:12918-13048
+  mergeLiveSnapshot: rejects incoming.revision &lt; current.revision
+  reduceDesktopHydration: state and transcript separately,
+  checks of the request and the selected session.
+
+node_modules/@earendil-works/pi-coding-agent/docs/session-format.md
+  JSONL; id/parentId; active branch; compaction.
+node_modules/@earendil-works/pi-coding-agent/docs/sdk.md
+  SessionManager owns the persisted context.
+node_modules/@pi-gui/pi-sdk-driver/src/runtime-deps.ts
+  agentDir, models.json, auth.json.</pre></details>
+<details><summary>05. RPC, run completion and extension UI</summary><pre>node_modules/@earendil-works/pi-coding-agent/docs/rpc.md
+  pi --mode rpc
+  JSONL commands over stdin, responses/events over stdout.
+  agent_settled marks the end of automatic work.
+
+node_modules/@pi-gui/pi-sdk-driver/src/session-supervisor.ts:2188-2369
+  message_update → assistantDelta / sessionUpdated
+  tool_execution_* → toolStarted / toolUpdated / toolFinished
+  agent_end → pendingRunOutcome
+  agent_settled → idle / runCompleted / runFailed
+
+out/renderer/assets/index-D0YKEDn2.js:39574-39589
+  iframe, src: connection.frameUrl, sandbox: "allow-scripts"
+
+node_modules/@pi-gui/pi-sdk-driver/src/desktop-extension-bridge.ts
+  Desktop view registration and extension lifecycle.
+node_modules/@earendil-works/pi-coding-agent/docs/extensions.md
+  TypeScript extensions run inside the pi process.
+  Terminal custom components do not carry over to RPC automatically.</pre></details>
+</section>
+</main>
+<script>
+'use strict';
+const $=s=>document.querySelector(s), $$=s=>Array.from(document.querySelectorAll(s));
+const descriptions={
+ui:['React + DOM','Receives state and the transcript and builds the virtualized list. Markdown and row measurement run in the renderer, along with input and click handling.'],
+bridge:['Preload: a narrow interface to the app','window.piApp exposes specific methods and subscriptions. IPC crosses the process boundary. Commands are sent with invoke; updates arrive as events.'],
+store:['DesktopAppStore + WindowOwner','The store holds app state and the transcript cache. WindowOwner projects state for the selected chat of each window. Separate owners handle tasks, workspaces and child chats.'],
+driver:['The adapter between the app and pi','PiSdkDriver implements the SessionDriver contract. Supervisors create SDK sessions, manage resources and translate pi events into interface events. The main agent runs in the main process.'],
+model:['Model provider','pi assembles the context of the active branch and calls the selected provider API. The answer streams back: text, tool call details and completion events.'],
+tools:['pi runs the tools','After a tool call, pi runs the tool and returns the result to the model. Shell may start child processes. This is not a separate CLI process for the main agent.']};
+const steps=[
+{nodes:['ui','bridge'],title:'01 · You send a message',text:'React calls window.piApp.submitComposer(). Preload passes the command to the main process over Electron IPC.',wire:true},
+{nodes:['store','driver'],title:'02 · The app picks the session',text:'DesktopAppStore hands the message to the driver. The pi SDK manages the queue, context, tools and current model.',wire:false},
+{nodes:['driver','model'],title:'03 · pi calls the model',text:'The provider streams the answer. The driver turns text events into assistantDelta; the store appends to the message in its cache.',wire:true,back:true},
+{nodes:['driver','tools','model'],title:'04 · If a tool is needed, another turn starts',text:'pi runs the tool call, stores the result and calls the model again if needed. The UI receives tool start, update and end events.',wire:true},
+{nodes:['store','bridge','ui'],title:'05 · A snapshot returns to the window',text:'Text updates are grouped roughly every 50 ms. The whole current transcript of the selected chat arrives over IPC. React updates the visible rows.',wire:true,back:true},
+{nodes:['driver','store','ui'],title:'06 · The run is fully finished',text:'pi reports agent_settled. The driver determines the outcome and the app updates the status. An earlier agent_end does not guarantee there will be no continuation.',wire:false}
+];
+let step=0,timer=null;
+function stop(){clearInterval(timer);timer=null;$('#play').textContent='▶ Show the request path';$('#architecture').classList.remove('running');}
+function renderStep(){const s=steps[step];$$('[data-node]').forEach(n=>n.classList.toggle('active',s.nodes.includes(n.dataset.node)));$('#step-count').textContent=`${step+1} / ${steps.length}`;$('#step-copy').replaceChildren();const b=document.createElement('b'),p=document.createElement('p');b.textContent=s.title;p.textContent=s.text;$('#step-copy').append(b,p);$$('#progress button').forEach((n,i)=>{n.classList.toggle('on',i===step);n.setAttribute('aria-current',i===step?'step':'false')});$('#architecture').classList.toggle('running',Boolean(timer)&&s.wire);$('#architecture').classList.toggle('returning',Boolean(s.back));}
+steps.forEach((s,i)=>{const b=document.createElement('button');b.setAttribute('aria-label',s.title);b.addEventListener('click',()=>{stop();step=i;renderStep()});$('#progress').append(b)});
+$('#play').addEventListener('click',()=>{if(timer){stop();return}if(step===steps.length-1)step=0;timer=setInterval(()=>{if(step===steps.length-1){stop();return}step++;renderStep()},4700);$('#play').textContent='Ⅱ Pause';renderStep()});
+$('#next').addEventListener('click',()=>{stop();step=(step+1)%steps.length;renderStep()});
+$('#reset').addEventListener('click',()=>{stop();step=0;renderStep();$$('[data-node]').forEach(n=>n.classList.remove('selected'));$('#node-detail').innerHTML='<strong>Click a block to see its role</strong><p>Frames are processes. Preload lives on the renderer side. Chromium helper processes are omitted.</p>'});
+$$('[data-node]').forEach(n=>n.addEventListener('click',()=>{stop();$$('[data-node]').forEach(x=>x.classList.toggle('selected',x===n));const [title,text]=descriptions[n.dataset.node];$('#node-detail').replaceChildren();const b=document.createElement('strong'),p=document.createElement('p');b.textContent=title;p.textContent=text;$('#node-detail').append(b,p)}));
+function showTab(id){stop();$$('[data-tab]').forEach(b=>{const on=b.dataset.tab===id;b.setAttribute('aria-selected',String(on));b.tabIndex=on?0:-1});$$('.panel').forEach(p=>p.hidden=p.id!==id)}
+$$('[data-tab]').forEach((b,i)=>{b.addEventListener('click',()=>showTab(b.dataset.tab));b.addEventListener('keydown',e=>{let next;if(e.key==='ArrowRight')next=(i+1)%4;else if(e.key==='ArrowLeft')next=(i+3)%4;else if(e.key==='Home')next=0;else if(e.key==='End')next=3;else return;e.preventDefault();const n=$$('[data-tab]')[next];showTab(n.dataset.tab);n.focus()})});
+function branch(id){$$('[data-branch]').forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.branch===id)));for(const k of ['a','b']){$('#path-'+k).classList.toggle('branch-hot',k===id);$('#circle-'+k).classList.toggle('hot',k===id);$('#label-'+k).classList.toggle('label-hot',k===id)}$('#context-preview').textContent=`Context: question → answer → plan ${id.toUpperCase()}\nThe other branch stays in JSONL.`}
+$$('[data-branch]').forEach(b=>b.addEventListener('click',()=>branch(b.dataset.branch)));
+for(let i=0;i<60;i++){const el=document.createElement('div');el.className='row-dot';$('#viewport-demo').append(el)}
+function demo(){const all=$('#search-demo').checked;$$('.row-dot').forEach((d,i)=>d.classList.toggle('drawn',all||(i>=30&&i<40)));$('#demo-caption').textContent=all?'Search: every row in the DOM':'Normally: visible rows + overscan'}
+$('#search-demo').addEventListener('change',demo);
+$('#sources-toggle').addEventListener('click',()=>{const show=$('#sources').hidden;$('#sources').hidden=!show;$('#sources-toggle').setAttribute('aria-expanded',String(show));if(show)$('#sources').scrollIntoView({behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'instant':'smooth',block:'start'})});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop()});
+renderStep();branch('a');demo();
+</script>
+</body>
+</html>

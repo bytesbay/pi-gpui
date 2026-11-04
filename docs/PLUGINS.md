@@ -1,0 +1,113 @@
+# App plugins
+
+Plugins are the main way to extend Pi GPUI. New interface features that the agent does not need are built as plugins too, so the API gets tested by its own authors.
+
+## What goes where
+
+| Need | Extend with | Runs in |
+|---|---|---|
+| Tools, agent commands, models, context | a pi extension | the pi process |
+| Input, buttons, status, panels, custom UI | an app plugin | the plugin's own process |
+| Themes, grammars, icons | data in a plugin (planned) | the app |
+
+An app plugin does not depend on pi sessions: it works with no session open and while the agent is busy.
+
+## How a plugin works
+
+A plugin is a folder with `plugin.json` and a program written in any language. The app starts the program as a separate process and exchanges JSON lines with it over stdin/stdout. If the plugin crashes or hangs, the app keeps working. The signal to exit is the end of stdin; the same happens when the app quits.
+
+The app looks for plugins in:
+
+1. `~/Library/Application Support/pi-gpui/plugins/<plugin>/`;
+2. `Contents/Resources/plugins/` in the app bundle, or `plugins/` in the repository when run from a build (built-in plugins; none ship today).
+
+Later, plugins will be installable as pi packages (`pi install`): a plugin folder inside the package, referenced by our key in the package manifest.
+
+### `plugin.json`
+
+```json
+{
+  "id": "dictation",
+  "name": "Dictation",
+  "version": "0.1.0",
+  "protocol": 1,
+  "run": ["./dictation"],
+  "contributes": {
+    "commands": [
+      {
+        "id": "dictation.toggle",
+        "title": "Dictation",
+        "icon": "microphone",
+        "keybinding": "cmd-shift-d",
+        "placement": ["composer"]
+      }
+    ]
+  }
+}
+```
+
+- `protocol`: the plugin protocol version (currently `1`). A plugin for another protocol is not loaded. The protocol changes only when messages change incompatibly, not with every app release.
+- `run`: the program and its arguments. A path starting with `./` is relative to the plugin folder. Other names are looked up in `PATH` and in the user's login shell, so `["node", "index.js"]` finds Node installed through nvm.
+- `contributes.commands`: commands. The app shows them **before the plugin starts**; the process starts on first use.
+  - `id`: must start with the plugin id and a dot.
+  - `placement`: where to show a button. `composer` (the message field) is supported today.
+  - `icon`: `microphone`, `terminal`, `file`, `sparkle`, `message`, `tool`, `folder`, `refresh`, `check`, `info`, `warning`.
+  - `keybinding`: a GPUI keystroke (`cmd-shift-d`).
+
+## Protocol 1
+
+Every message is a JSON object on a single line; lines end with `\n`. A message looks like `{"method": "...", "params": {...}}`. In version 1 all messages are notifications without a reply.
+
+### App → plugin
+
+| Method | Params | When |
+|---|---|---|
+| `initialize` | `protocol`, `app`, `plugin.id`, `plugin.dir` | right after start |
+| `command.run` | `command`, `workspace?`, `session?` | the user pressed a button or keybinding |
+
+### Plugin → app
+
+| Method | Params | Effect |
+|---|---|---|
+| `composer.insert` | `text`, `replaceLast?`, `spaceBefore?` | inserts text at the cursor of the active message field. `replaceLast` replaces the plugin's previous insertion (for partial results). `spaceBefore` adds a space when the character before the insertion is not whitespace |
+| `composer.setText` | `text` | replaces the whole message field |
+| `command.setState` | `command`, `active` | toggled state of the button (for example, recording) |
+| `status.set` | `id`, `text`, `tone?`, `busy?` | a status item in the title bar; `busy` shows a spinner; `tone`: `info`, `warning`, `error`, `success` |
+| `status.clear` | `id` | removes a status item |
+| `notify` | `message`, `tone?` | a notice in the window |
+| `log` | `message` | a line in the app log (stderr) |
+
+The app ignores unknown methods, so the protocol can grow without breaking older plugins.
+
+### JavaScript example
+
+```js
+import readline from "node:readline";
+
+const send = (method, params = {}) =>
+  process.stdout.write(JSON.stringify({ method, params }) + "\n");
+
+readline.createInterface({ input: process.stdin }).on("line", (line) => {
+  const { method, params } = JSON.parse(line);
+  if (method === "command.run" && params.command === "hello.insert") {
+    send("composer.insert", { text: "Hello from a plugin", spaceBefore: true });
+  }
+});
+```
+
+`readline` is fine for protocol 1: the app never writes the U+2028/U+2029 characters inside lines.
+
+## Permissions
+
+macOS asks for permissions on behalf of the app that started the process. While Pi GPUI runs from a terminal, the permission prompt names the terminal; for a bundled `.app` it names the app.
+
+## Security
+
+A plugin runs with the user's permissions, like a pi extension. Install plugins only from sources you trust. A plugin cannot run code inside the app or break its interface: it can only send the messages described above.
+
+## Planned
+
+- Canvas: frames over a separate binary channel plus keyboard input (games, charts, previews).
+- Panels and tabs described as data built from our components.
+- Highlighting grammars and themes as data.
+- Installing plugins as pi packages and a plugin list in settings.
