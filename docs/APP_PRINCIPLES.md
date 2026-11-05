@@ -13,7 +13,7 @@ The agent engine stays in pi. We do not build our own agent loop, duplicate mode
 - The user installs and authenticates pi.
 - The app finds the pi executable. The user can point it at another one explicitly.
 - We do not download pi, ship our own copy or install it on first launch.
-- We do not install or update pi packages, extensions or dependencies automatically.
+- We never install or update pi, its packages or dependencies on our own. The app shows available updates next to the pi version and runs pi's own `pi update` only when the user clicks; a pi update that would leave the supported range is not offered.
 - If pi is missing, the app shows a clear message with installation instructions.
 
 The runtime dependency is a compatible installed pi. GPUI and the Rust crates we use are build dependencies of the app, not extra programs the user has to install.

@@ -5,6 +5,7 @@ mod hub;
 mod jsonl;
 mod markdown;
 mod pi;
+mod pi_updates;
 mod platform;
 mod plugins;
 mod selectable;

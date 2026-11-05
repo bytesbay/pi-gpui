@@ -23,6 +23,7 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 - Compaction shown in the transcript with token counts and the summary.
 - Ayu Dark and Ayu Light themes, following macOS by default.
 - Sessions can be renamed, hidden or deleted (to the Trash).
+- Updates for pi and its extensions next to the pi version, with versions and whether this app supports the new pi. Applied with pi's own `pi update`, only when you click.
 
 ## Keys
 

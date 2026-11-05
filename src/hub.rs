@@ -17,6 +17,7 @@ use serde_json::{Value, json};
 
 use crate::chat::{ChatEvent, ChatStatus, ChatView, DetailsExpanded};
 use crate::pi::{self, Installation};
+use crate::pi_updates;
 use crate::platform;
 use crate::plugins::{CommandContext, PluginEvent, PluginRegistry, RunPluginCommand};
 use crate::sessions::{self, SessionSummary};
@@ -122,6 +123,12 @@ impl Renaming {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum UpdatePopover {
+    Pi,
+    Extensions,
+}
+
 /// Text fields of the open Settings page (the other controls need no state).
 struct SettingsPage {
     ui_font: Entity<TextInput>,
@@ -196,6 +203,13 @@ pub struct HubView {
     command_held: bool,
     /// The Settings page replaces the main area while open.
     settings_page: Option<SettingsPage>,
+    /// Available pi and extension updates (applied only on request).
+    pi_updates: pi_updates::Updates,
+    update_popover: Option<UpdatePopover>,
+    update_popover_closed_at: Option<std::time::Instant>,
+    /// What `pi update` is doing right now.
+    pi_updating: Option<String>,
+    _pi_updates_task: Task<()>,
     focus_handle: FocusHandle,
     plugins: Entity<PluginRegistry>,
     _plugin_subscriptions: Vec<Subscription>,
@@ -290,6 +304,11 @@ impl HubView {
             renaming_sessions: HashSet::new(),
             command_held: false,
             settings_page: None,
+            pi_updates: pi_updates::Updates::default(),
+            update_popover: None,
+            update_popover_closed_at: None,
+            pi_updating: None,
+            _pi_updates_task: Task::ready(()),
             focus_handle: cx.focus_handle(),
             plugins,
             _plugin_subscriptions: plugin_subscriptions,
@@ -445,6 +464,7 @@ impl HubView {
                         AutoUpdater::global(cx)
                             .update(cx, |updater, _| updater.set_pi_version(version));
                         this.installation = InstallationState::Ready(installation);
+                        this.check_pi_updates(cx);
                         if let Some(path) = this.pending_new_chat.take() {
                             this.start_chat(&path, None, cx);
                         }
@@ -1421,31 +1441,13 @@ impl HubView {
             ),
             InstallationState::Ready(installation) => {
                 let untested = installation.is_untested();
+                let buttons = self.render_update_buttons(cx);
                 footer.child(
                     h_flex()
-                        .id("pi-version")
                         .gap(px(6.))
-                        .child(Indicator::dot(if untested {
-                            Color::Warning
-                        } else {
-                            Color::Success
-                        }))
-                        .child(
-                            Label::new(if untested {
-                                format!("pi {} · not tested yet", installation.version)
-                            } else {
-                                format!("pi {}", installation.version)
-                            })
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                        )
-                        .when(untested, |this| {
-                            this.tooltip(Tooltip::text(format!(
-                                "This app was tested with pi up to {}.{}.x. It should work; check for app updates.",
-                                pi::TESTED_PI.major,
-                                pi::TESTED_PI.minor
-                            )))
-                        }),
+                        .child(self.render_pi_version(installation, untested))
+                        .child(div().flex_1())
+                        .children(buttons),
                 )
             }
             InstallationState::Failed(error) => {
@@ -1981,6 +1983,371 @@ impl HubView {
                         stepper("buffer_font_size", current.buffer_font_size, cx),
                     )),
             )
+            .into_any_element()
+    }
+
+    /// Looks for pi and package updates in the background.
+    fn check_pi_updates(&mut self, cx: &mut Context<Self>) {
+        let InstallationState::Ready(installation) = &self.installation else {
+            return;
+        };
+        let installation = installation.clone();
+        let check = cx.background_spawn(async move { pi_updates::check(&installation) });
+        self._pi_updates_task = cx.spawn(async move |this, cx| {
+            let updates = check.await;
+            this.update(cx, |this, cx| {
+                this.pi_updates = updates;
+                cx.notify();
+            })
+            .ok();
+        });
+    }
+
+    fn toggle_update_popover(&mut self, popover: UpdatePopover, cx: &mut Context<Self>) {
+        if self.update_popover == Some(popover) {
+            self.update_popover = None;
+        } else if self
+            .update_popover_closed_at
+            .is_none_or(|closed| closed.elapsed() > std::time::Duration::from_millis(250))
+        {
+            self.update_popover = Some(popover);
+        }
+        cx.notify();
+    }
+
+    fn close_update_popover(&mut self, cx: &mut Context<Self>) {
+        if self.update_popover.take().is_some() {
+            self.update_popover_closed_at = Some(std::time::Instant::now());
+            cx.notify();
+        }
+    }
+
+    /// Runs `pi update <args>` and reports back. Open sessions keep the pi
+    /// and extensions they started with until they are reopened.
+    fn run_pi_update(&mut self, label: String, args: Vec<String>, cx: &mut Context<Self>) {
+        let InstallationState::Ready(installation) = &self.installation else {
+            return;
+        };
+        if self.pi_updating.is_some() {
+            return;
+        }
+        self.update_popover = None;
+        self.pi_updating = Some(label.clone());
+        let installation = installation.clone();
+        let updates_pi = args.is_empty();
+        let job = cx.background_spawn(async move {
+            let args: Vec<&str> = args.iter().map(String::as_str).collect();
+            pi_updates::run(&installation, &args)
+        });
+        cx.spawn(async move |this, cx| {
+            let result = job.await;
+            this.update(cx, |this, cx| {
+                this.pi_updating = None;
+                let open_sessions = this.workspaces.iter().any(|entry| !entry.chats.is_empty());
+                let reopen = if open_sessions {
+                    " Open sessions keep the previous version until you reopen them."
+                } else {
+                    ""
+                };
+                this.notice = Some(match result {
+                    Ok(_) => (format!("{label}: done.{reopen}"), Color::Default),
+                    Err(error) => (format!("{label} failed: {error}"), Color::Warning),
+                });
+                if updates_pi {
+                    // The version gate runs again and then looks for updates.
+                    this.check_installation(cx);
+                } else {
+                    this.check_pi_updates(cx);
+                }
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn render_pi_version(&self, installation: &Installation, untested: bool) -> AnyElement {
+        h_flex()
+            .id("pi-version")
+            .gap(px(6.))
+            .child(Indicator::dot(if untested {
+                Color::Warning
+            } else {
+                Color::Success
+            }))
+            .child(
+                Label::new(if untested {
+                    format!("pi {} · not tested yet", installation.version)
+                } else {
+                    format!("pi {}", installation.version)
+                })
+                .size(LabelSize::Small)
+                .color(Color::Muted),
+            )
+            .when(untested, |this| {
+                this.tooltip(Tooltip::text(format!(
+                    "This app was tested with pi up to {}.{}.x. It should work; check for app updates.",
+                    pi::TESTED_PI.major,
+                    pi::TESTED_PI.minor
+                )))
+            })
+            .into_any_element()
+    }
+
+    /// Buttons next to the pi version: a pi update and package updates.
+    fn render_update_buttons(&self, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let mut buttons = Vec::new();
+        if let Some(label) = &self.pi_updating {
+            buttons.push(
+                h_flex()
+                    .gap(px(4.))
+                    .child(Spinner::new().size(IconSize::XSmall))
+                    .child(LoadingLabel::new(label.clone()).size(LabelSize::XSmall))
+                    .into_any_element(),
+            );
+            return buttons;
+        }
+        let colors = cx.theme().colors.clone();
+        let chip = |id: &'static str,
+                    text: String,
+                    accent: bool,
+                    popover: UpdatePopover,
+                    cx: &mut Context<Self>| {
+            let open = self.update_popover == Some(popover);
+            h_flex()
+                .id(id)
+                .h(px(20.))
+                .px(px(6.))
+                .gap(px(3.))
+                .rounded(px(5.))
+                .border_1()
+                .border_color(if accent {
+                    colors.text_accent.opacity(0.35)
+                } else {
+                    colors.border_variant
+                })
+                .when(open, |this| this.bg(colors.ghost_element_selected))
+                .hover(|style| style.bg(colors.ghost_element_hover))
+                .cursor_pointer()
+                .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
+                .on_click(
+                    cx.listener(move |this, _, _, cx| this.toggle_update_popover(popover, cx)),
+                )
+                .child(
+                    Icon::new(IconName::ArrowUp)
+                        .size(IconSize::XSmall)
+                        .color(if accent { Color::Accent } else { Color::Muted }),
+                )
+                .child(Label::new(text).size(LabelSize::XSmall).color(if accent {
+                    Color::Accent
+                } else {
+                    Color::Muted
+                }))
+        };
+        if let Some(version) = self.pi_updates.pi {
+            let accent =
+                pi_updates::compatibility(version) != pi_updates::PiCompatibility::NeedsAppUpdate;
+            let element = chip(
+                "pi-update",
+                format!("pi {version}"),
+                accent,
+                UpdatePopover::Pi,
+                cx,
+            );
+            buttons.push(self.with_update_popover(element, UpdatePopover::Pi, cx));
+        }
+        let count = self.pi_updates.packages.len();
+        if count > 0 {
+            let text = if count == 1 {
+                "1 extension".to_string()
+            } else {
+                format!("{count} extensions")
+            };
+            let element = chip(
+                "extension-updates",
+                text,
+                true,
+                UpdatePopover::Extensions,
+                cx,
+            );
+            buttons.push(self.with_update_popover(element, UpdatePopover::Extensions, cx));
+        }
+        buttons
+    }
+
+    fn with_update_popover(
+        &self,
+        button: gpui::Stateful<gpui::Div>,
+        popover: UpdatePopover,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let content = (self.update_popover == Some(popover)).then(|| match popover {
+            UpdatePopover::Pi => self.render_pi_update_popover(cx),
+            UpdatePopover::Extensions => self.render_extension_popover(cx),
+        });
+        div()
+            .relative()
+            .flex_none()
+            .child(button)
+            .when_some(content, |this, content| {
+                this.child(
+                    div().absolute().top_0().left_0().child(
+                        deferred(
+                            anchored()
+                                .anchor(gpui::Corner::BottomLeft)
+                                .snap_to_window_with_margin(px(8.))
+                                .child(div().pb(px(6.)).child(content)),
+                        )
+                        .with_priority(1),
+                    ),
+                )
+            })
+            .into_any_element()
+    }
+
+    fn update_popover_frame(&self, cx: &mut Context<Self>) -> gpui::Stateful<gpui::Div> {
+        let colors = cx.theme().colors.clone();
+        v_flex()
+            .id("update-popover")
+            .w(px(320.))
+            .p(px(12.))
+            .gap(px(10.))
+            .rounded(px(10.))
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.elevated_surface_background)
+            .shadow_lg()
+            .occlude()
+            .on_mouse_down_out(cx.listener(|this, _, _, cx| this.close_update_popover(cx)))
+    }
+
+    fn render_pi_update_popover(&self, cx: &mut Context<Self>) -> AnyElement {
+        let Some(latest) = self.pi_updates.pi else {
+            return div().into_any_element();
+        };
+        let current = match &self.installation {
+            InstallationState::Ready(installation) => installation.version.to_string(),
+            _ => "?".to_string(),
+        };
+        let (note, color, allowed) = match pi_updates::compatibility(latest) {
+            pi_updates::PiCompatibility::Supported => (
+                "Works with this version of Pi GPUI.".to_string(),
+                Color::Success,
+                true,
+            ),
+            pi_updates::PiCompatibility::Untested => (
+                format!(
+                    "Not tested with this app yet (tested up to {}.{}.x). It should work; if something breaks, check for app updates.",
+                    pi::TESTED_PI.major,
+                    pi::TESTED_PI.minor
+                ),
+                Color::Warning,
+                true,
+            ),
+            pi_updates::PiCompatibility::NeedsAppUpdate => (
+                format!(
+                    "This app supports pi {}.x. Update Pi GPUI first, or wait for a version that supports pi {}.",
+                    pi::MIN_PI.major,
+                    latest.major
+                ),
+                Color::Error,
+                false,
+            ),
+        };
+        self.update_popover_frame(cx)
+            .child(
+                Label::new("pi update")
+                    .size(LabelSize::Small)
+                    .color(Color::Placeholder),
+            )
+            .child(Label::new(format!("{current} → {latest}")).weight(FontWeight::MEDIUM))
+            .child(Label::new(note).size(LabelSize::Small).color(color))
+            .child(
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        Button::new("run-pi-update", "Update pi")
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .disabled(!allowed)
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.run_pi_update(
+                                    format!("Updating pi to {latest}"),
+                                    Vec::new(),
+                                    cx,
+                                )
+                            })),
+                    )
+                    .when(!allowed, |this| {
+                        this.child(
+                            Button::new("pi-update-app", "Check for app updates").on_click(
+                                |_, _, cx| {
+                                    AutoUpdater::global(cx)
+                                        .update(cx, |updater, cx| updater.check(true, cx))
+                                },
+                            ),
+                        )
+                    }),
+            )
+            .into_any_element()
+    }
+
+    fn render_extension_popover(&self, cx: &mut Context<Self>) -> AnyElement {
+        let packages = self.pi_updates.packages.clone();
+        let rows: Vec<AnyElement> = packages
+            .iter()
+            .enumerate()
+            .map(|(index, package)| {
+                let source = package.source.clone();
+                let label = format!("Updating {}", package.name);
+                h_flex()
+                    .gap(px(8.))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .child(Label::new(package.name.clone()).size(LabelSize::Small))
+                            .child(
+                                Label::new(format!("{} → {}", package.current, package.latest))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Muted),
+                            ),
+                    )
+                    .child(
+                        Button::new(
+                            ElementId::Name(format!("update-extension-{index}").into()),
+                            "Update",
+                        )
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.run_pi_update(label.clone(), vec![source.clone()], cx)
+                        })),
+                    )
+                    .into_any_element()
+            })
+            .collect();
+        let count = packages.len();
+        self.update_popover_frame(cx)
+            .child(
+                Label::new("Extension updates")
+                    .size(LabelSize::Small)
+                    .color(Color::Placeholder),
+            )
+            .children(rows)
+            .when(count > 1, |this| {
+                this.child(
+                    h_flex().child(
+                        Button::new("update-all-extensions", format!("Update all {count}"))
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.run_pi_update(
+                                    format!("Updating {count} extensions"),
+                                    vec!["--extensions".to_string()],
+                                    cx,
+                                )
+                            })),
+                    ),
+                )
+            })
             .into_any_element()
     }
 
