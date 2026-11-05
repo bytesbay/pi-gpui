@@ -1,5 +1,6 @@
-//! The session tree from RPC `get_tree`, flattened into lines for the tree
-//! view.
+//! The session tree from RPC `get_entries`, flattened into lines for the tree
+//! view. `get_tree` is not used: it nests one level per entry, which a long
+//! session pushes past serde_json's recursion limit.
 //!
 //! Only entries a person cares about become lines: user messages, assistant
 //! answers with text, compactions and branch summaries. Tool calls, tool
@@ -55,34 +56,91 @@ struct Visible {
     text: String,
     label: Option<String>,
     active: bool,
-    children: Vec<Visible>,
+    /// Indices into the node list, in append order.
+    children: Vec<usize>,
 }
 
-/// Flattens a `get_tree` response. Returns the lines and the index of the
+/// Flattens a `get_entries` response. Returns the lines and the index of the
 /// current position.
 pub(super) fn flatten(data: &Value) -> (Vec<TreeLine>, Option<usize>) {
-    let roots = data["tree"]
+    let entries = data["entries"]
         .as_array()
         .map(Vec::as_slice)
         .unwrap_or_default();
-    let mut parents = HashMap::new();
-    for root in roots {
-        collect_parents(root, &mut parents);
-    }
-    let mut active = HashSet::new();
-    let mut cursor = data["leafId"].as_str().map(str::to_string);
-    while let Some(id) = cursor {
-        cursor = parents.get(&id).cloned().flatten();
-        active.insert(id);
+
+    let mut parents: HashMap<&str, Option<&str>> = HashMap::new();
+    let mut labels: HashMap<&str, &str> = HashMap::new();
+    for entry in entries {
+        let Some(id) = entry["id"].as_str() else {
+            continue;
+        };
+        let parent = entry["parentId"].as_str().filter(|parent| *parent != id);
+        parents.insert(id, parent);
+        if entry["type"] == "label"
+            && let Some(target) = entry["targetId"].as_str()
+        {
+            match entry["label"].as_str().filter(|label| !label.is_empty()) {
+                Some(label) => labels.insert(target, label),
+                None => labels.remove(target),
+            };
+        }
     }
 
-    let mut visible: Vec<Visible> = roots
-        .iter()
-        .flat_map(|root| convert(root, &active))
-        .collect();
-    order(&mut visible);
+    // The path from the leaf to the root. Bounded in case of a parent cycle.
+    let mut active = HashSet::new();
+    let mut cursor = data["leafId"].as_str();
+    while let Some(id) = cursor {
+        if !active.insert(id) {
+            break;
+        }
+        cursor = parents.get(id).copied().flatten();
+    }
+
+    let mut nodes = Vec::new();
+    let mut index: HashMap<&str, usize> = HashMap::new();
+    let mut entry_parents = Vec::new();
+    for entry in entries {
+        let Some(id) = entry["id"].as_str() else {
+            continue;
+        };
+        let Some((kind, text)) = describe(entry) else {
+            continue;
+        };
+        index.insert(id, nodes.len());
+        entry_parents.push(parents.get(id).copied().flatten());
+        nodes.push(Visible {
+            id: id.to_string(),
+            kind,
+            text,
+            label: labels.get(id).map(|label| label.to_string()),
+            active: active.contains(id),
+            children: Vec::new(),
+        });
+    }
+
+    // Attach each visible node to its nearest visible ancestor.
+    let mut nearest: HashMap<&str, Option<usize>> = HashMap::new();
+    let mut roots = Vec::new();
+    for (child, parent) in entry_parents.into_iter().enumerate() {
+        match nearest_visible(parent, &parents, &index, &mut nearest) {
+            Some(parent) if parent != child => nodes[parent].children.push(child),
+            _ => roots.push(child),
+        }
+    }
+
+    // Inactive branches first, the active one last.
+    let order = |list: &mut Vec<usize>, nodes: &[Visible]| {
+        list.sort_by_key(|&node| nodes[node].active);
+    };
+    order(&mut roots, &nodes);
+    for node in 0..nodes.len() {
+        let mut children = std::mem::take(&mut nodes[node].children);
+        order(&mut children, &nodes);
+        nodes[node].children = children;
+    }
+
     let mut lines = Vec::new();
-    emit_siblings(&visible, &[], &mut lines);
+    emit_siblings(&nodes, &roots, &[], &mut lines);
 
     let current = lines.iter().rposition(|line| line.active);
     if let Some(index) = current {
@@ -91,39 +149,33 @@ pub(super) fn flatten(data: &Value) -> (Vec<TreeLine>, Option<usize>) {
     (lines, current)
 }
 
-fn collect_parents(node: &Value, parents: &mut HashMap<String, Option<String>>) {
-    let entry = &node["entry"];
-    if let Some(id) = entry["id"].as_str() {
-        parents.insert(
-            id.to_string(),
-            entry["parentId"].as_str().map(str::to_string),
-        );
-    }
-    for child in node["children"].as_array().into_iter().flatten() {
-        collect_parents(child, parents);
-    }
-}
-
-fn convert(node: &Value, active: &HashSet<String>) -> Vec<Visible> {
-    let children: Vec<Visible> = node["children"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|child| convert(child, active))
-        .collect();
-    let entry = &node["entry"];
-    let Some((kind, text)) = describe(entry) else {
-        return children;
+/// The visible node at or above `start`, walking up through hidden entries.
+fn nearest_visible<'a>(
+    start: Option<&'a str>,
+    parents: &HashMap<&'a str, Option<&'a str>>,
+    index: &HashMap<&'a str, usize>,
+    memo: &mut HashMap<&'a str, Option<usize>>,
+) -> Option<usize> {
+    let mut walked = Vec::new();
+    let mut cursor = start;
+    let found = loop {
+        let Some(id) = cursor else { break None };
+        if let Some(&found) = memo.get(id) {
+            break found;
+        }
+        if let Some(&found) = index.get(id) {
+            break Some(found);
+        }
+        if walked.len() > parents.len() {
+            break None;
+        }
+        walked.push(id);
+        cursor = parents.get(id).copied().flatten();
     };
-    let id = entry["id"].as_str().unwrap_or_default().to_string();
-    vec![Visible {
-        active: active.contains(&id),
-        id,
-        kind,
-        text,
-        label: node["label"].as_str().map(str::to_string),
-        children,
-    }]
+    for id in walked {
+        memo.insert(id, found);
+    }
+    found
 }
 
 fn describe(entry: &Value) -> Option<(NodeKind, String)> {
@@ -158,40 +210,38 @@ fn describe(entry: &Value) -> Option<(NodeKind, String)> {
     }
 }
 
-/// Inactive branches first, the active one last, recursively.
-fn order(nodes: &mut [Visible]) {
-    nodes.sort_by_key(|node| node.active);
-    for node in nodes {
-        order(&mut node.children);
-    }
-}
-
-fn emit_siblings(nodes: &[Visible], gutter: &[Gutter], lines: &mut Vec<TreeLine>) {
-    if let [only] = nodes {
-        emit_chain(only, gutter.to_vec(), gutter, lines);
+fn emit_siblings(nodes: &[Visible], list: &[usize], gutter: &[Gutter], lines: &mut Vec<TreeLine>) {
+    if let [only] = list {
+        emit_chain(nodes, *only, gutter.to_vec(), gutter, lines);
         return;
     }
-    for (index, node) in nodes.iter().enumerate() {
-        let last = index + 1 == nodes.len();
+    for (index, &node) in list.iter().enumerate() {
+        let last = index + 1 == list.len();
         let mut own = gutter.to_vec();
         own.push(if last { Gutter::Corner } else { Gutter::Tee });
         let mut below = gutter.to_vec();
         below.push(if last { Gutter::Blank } else { Gutter::Pipe });
-        emit_chain(node, own, &below, lines);
+        emit_chain(nodes, node, own, &below, lines);
     }
 }
 
 /// `node` and its single-child descendants share one level; `own` is the
 /// gutter of `node` itself, `below` the gutter of everything after it.
-fn emit_chain(node: &Visible, own: Vec<Gutter>, below: &[Gutter], lines: &mut Vec<TreeLine>) {
-    lines.push(line(node, own));
+fn emit_chain(
+    nodes: &[Visible],
+    node: usize,
+    own: Vec<Gutter>,
+    below: &[Gutter],
+    lines: &mut Vec<TreeLine>,
+) {
+    lines.push(line(&nodes[node], own));
     let mut current = node;
-    while let [only] = current.children.as_slice() {
-        lines.push(line(only, below.to_vec()));
-        current = only;
+    while let [only] = nodes[current].children.as_slice() {
+        lines.push(line(&nodes[*only], below.to_vec()));
+        current = *only;
     }
-    if !current.children.is_empty() {
-        emit_siblings(&current.children, below, lines);
+    if !nodes[current].children.is_empty() {
+        emit_siblings(nodes, &nodes[current].children, below, lines);
     }
 }
 
@@ -246,27 +296,21 @@ mod tests {
         json!({ "type": "message", "id": id, "parentId": parent, "message": { "role": role, "content": content } })
     }
 
-    fn node(entry: Value, children: Vec<Value>) -> Value {
-        json!({ "entry": entry, "children": children })
-    }
-
     /// u1 → a1 → (u2 → a2) | (u3 → tool result → a3), leaf at a3.
     fn sample() -> Value {
         let tool_result = json!({ "type": "message", "id": "t3", "parentId": "u3", "message": { "role": "toolResult", "content": [] } });
         json!({
             "leafId": "a3",
-            "tree": [node(message("u1", None, "user", "first"), vec![
-                node(message("a1", Some("u1"), "assistant", "answer"), vec![
-                    node(message("u3", Some("a1"), "user", "branch B"), vec![
-                        node(tool_result, vec![
-                            node(message("a3", Some("t3"), "assistant", "answer B"), vec![]),
-                        ]),
-                    ]),
-                    node(message("u2", Some("a1"), "user", "branch A"), vec![
-                        node(message("a2", Some("u2"), "assistant", "answer A"), vec![]),
-                    ]),
-                ]),
-            ])],
+            "entries": [
+                message("u1", None, "user", "first"),
+                message("a1", Some("u1"), "assistant", "answer"),
+                message("u2", Some("a1"), "user", "branch A"),
+                message("a2", Some("u2"), "assistant", "answer A"),
+                message("u3", Some("a1"), "user", "branch B"),
+                tool_result,
+                message("a3", Some("t3"), "assistant", "answer B"),
+                { "type": "label", "id": "l1", "parentId": "a3", "targetId": "u2", "label": "idea" },
+            ],
         })
     }
 
@@ -283,6 +327,24 @@ mod tests {
         assert_eq!(lines[5].gutter, [Gutter::Blank]);
         assert_eq!(current, Some(5));
         assert!(lines[5].current && lines[4].active && !lines[2].active);
+        assert_eq!(lines[2].label.as_deref(), Some("idea"));
+    }
+
+    #[test]
+    fn a_long_linear_session_flattens() {
+        let mut entries = Vec::new();
+        let mut parent: Option<String> = None;
+        for index in 0..5000 {
+            let id = format!("m{index}");
+            let role = if index % 2 == 0 { "user" } else { "assistant" };
+            entries.push(message(&id, parent.as_deref(), role, "text"));
+            parent = Some(id);
+        }
+        let data = json!({ "leafId": parent, "entries": entries });
+        let (lines, current) = flatten(&data);
+        assert_eq!(lines.len(), 5000);
+        assert_eq!(current, Some(4999));
+        assert!(lines.iter().all(|line| line.gutter.is_empty()));
     }
 
     #[test]

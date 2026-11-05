@@ -193,7 +193,7 @@ enum SummaryState {
 
 /// The session tree overlay (`/tree`, ⌘⇧T).
 struct TreeView {
-    /// `None` until `get_tree` answers.
+    /// `None` until `get_entries` answers.
     lines: Option<Vec<tree::TreeLine>>,
     selected: usize,
     scroll: ScrollHandle,
@@ -940,7 +940,7 @@ impl ChatView {
                 self.slash_commands = slash::builtin();
                 self.slash_commands.extend(slash::from_pi(data));
             }
-            "get_tree" => {
+            "get_entries" => {
                 if let Some(view) = &mut self.tree {
                     let (lines, current) = tree::flatten(data);
                     view.selected = current.unwrap_or(lines.len().saturating_sub(1));
@@ -1296,7 +1296,7 @@ impl ChatView {
             scroll_to_selected: false,
             focus,
         });
-        self.send_all([json!({ "type": "get_tree" })]);
+        self.send_all([json!({ "type": "get_entries" })]);
         cx.notify();
     }
 
