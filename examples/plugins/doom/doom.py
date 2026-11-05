@@ -78,8 +78,11 @@ def encode(game):
     return base64.b64encode(buffer.getvalue()).decode()
 
 
+game = None
+
+
 def game_loop():
-    game = None
+    global game
     sent_to = None
     while True:
         with state_lock:
@@ -132,6 +135,9 @@ def main():
                 button = KEYS.get(str(params.get("key", "")).lower())
                 if button is not None:
                     (held.add if params.get("down") else held.discard)(button)
+    # stdin closed: the app quit. Stop the engine, it is a separate process.
+    if game is not None:
+        game.close()
 
 
 if __name__ == "__main__":
