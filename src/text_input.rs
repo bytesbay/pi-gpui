@@ -409,6 +409,15 @@ impl TextInput {
         }
     }
 
+    pub fn set_placeholder(
+        &mut self,
+        placeholder: impl Into<SharedString>,
+        cx: &mut Context<Self>,
+    ) {
+        self.placeholder = placeholder.into();
+        cx.notify();
+    }
+
     pub fn set_vertical_passthrough(&mut self, passthrough: bool) {
         self.vertical_passthrough = passthrough;
     }

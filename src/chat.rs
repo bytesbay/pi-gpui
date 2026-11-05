@@ -1,5 +1,6 @@
 //! One pi session: transcript, composer and its own `pi --mode rpc` process.
 
+mod dialog;
 mod overlays;
 mod slash;
 mod tree;
@@ -54,6 +55,10 @@ actions!(
         SlashDown,
         SlashComplete,
         SlashDismiss,
+        DialogUp,
+        DialogDown,
+        DialogConfirm,
+        DialogCancel,
     ]
 );
 
@@ -61,6 +66,7 @@ const KEY_CONTEXT: &str = "Chat";
 const MODEL_PICKER_CONTEXT: &str = "ModelPicker";
 const TREE_CONTEXT: &str = "SessionTree";
 const SLASH_CONTEXT: &str = "SlashMenu";
+const COMPOSER_PLACEHOLDER: &str = "Message pi…";
 /// Ignore the chip click that arrives right after a click outside closed the picker.
 const PICKER_REOPEN_GUARD: Duration = Duration::from_millis(250);
 /// Upper bound of pi records applied per UI update, so a burst cannot hold
@@ -101,6 +107,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", SlashDown, Some(SLASH_CONTEXT)),
         KeyBinding::new("tab", SlashComplete, Some(SLASH_CONTEXT)),
         KeyBinding::new("escape", SlashDismiss, Some(SLASH_CONTEXT)),
+        KeyBinding::new("up", DialogUp, Some(dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("down", DialogDown, Some(dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("enter", DialogConfirm, Some(dialog::DIALOG_CONTEXT)),
+        KeyBinding::new("escape", DialogCancel, Some(dialog::DIALOG_CONTEXT)),
     ]);
 }
 
@@ -258,6 +268,8 @@ enum Row {
         tokens_after: Option<u64>,
         expanded: bool,
     },
+    /// A question from an extension (see `dialog`).
+    Dialog(dialog::DialogRow),
 }
 
 /// A fork in progress: pi forks only from a user message, so a fork from
@@ -339,6 +351,12 @@ pub struct ChatView {
     selection: Entity<TextSelection>,
     _selection_subscription: Subscription,
     animation: AnimationTicker,
+    /// The extension dialog pi is waiting on.
+    dialog: Option<dialog::PendingDialog>,
+    /// Move focus to the new dialog on the next render.
+    focus_dialog: bool,
+    /// Free text typed for a select; answers the input it leads to.
+    queued_dialog_answer: Option<String>,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -352,7 +370,7 @@ impl ChatView {
         plugins: Entity<PluginRegistry>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let composer = cx.new(|cx| TextInput::new("Message pi…", cx).with_attachments());
+        let composer = cx.new(|cx| TextInput::new(COMPOSER_PLACEHOLDER, cx).with_attachments());
         // The send button's state depends on the composer text.
         let composer_subscription = cx.observe(&composer, |this, composer, cx| {
             this.slash_highlight = 0;
@@ -441,6 +459,9 @@ impl ChatView {
             selection,
             _selection_subscription: selection_subscription,
             animation: AnimationTicker::default(),
+            dialog: None,
+            focus_dialog: false,
+            queued_dialog_answer: None,
         };
         this.start_process(cx);
         this
@@ -575,6 +596,12 @@ impl ChatView {
     }
 
     fn submit(&mut self, _: &Submit, window: &mut Window, cx: &mut Context<Self>) {
+        if self.dialog.is_some() {
+            let text = self.composer.read(cx).submit_text();
+            if self.submit_to_dialog(&text, cx) {
+                return;
+            }
+        }
         if let Some(&index) = self.slash_matches(cx).get(self.slash_highlight) {
             self.accept_slash(index, true, window, cx);
             return;
@@ -629,6 +656,11 @@ impl ChatView {
     }
 
     fn cancel_run(&mut self, _: &CancelRun, _window: &mut Window, cx: &mut Context<Self>) {
+        // Esc first dismisses the question pi waits on, then stops the run.
+        if self.dialog.is_some() {
+            self.cancel_dialog(cx);
+            return;
+        }
         self.request_abort(cx);
     }
 
@@ -662,7 +694,7 @@ impl ChatView {
                 JsonlMessage::Exited {
                     status,
                     stderr_tail,
-                } => self.on_process_exited(status, stderr_tail, &mut changed),
+                } => self.on_process_exited(status, stderr_tail, &mut changed, cx),
             }
         }
         if std::mem::take(&mut self.needs_list_reset) {
@@ -705,6 +737,8 @@ impl ChatView {
             "agent_settled" => {
                 self.running = false;
                 self.pending_prompt = false;
+                self.close_dialog(dialog::DialogState::Closed, changed, cx);
+                self.queued_dialog_answer = None;
                 self.finish_streaming(changed);
                 self.request_stats();
                 if record["aborted"].as_bool() == Some(true) {
@@ -830,7 +864,7 @@ impl ChatView {
                     record["error"].as_str().unwrap_or("?")
                 ),
             ),
-            "extension_ui_request" => self.apply_extension_request(record, cx),
+            "extension_ui_request" => self.apply_extension_request(record, changed, cx),
             _ => {}
         }
     }
@@ -1784,7 +1818,15 @@ impl ChatView {
         }
     }
 
-    fn apply_extension_request(&mut self, record: &Value, cx: &mut Context<Self>) {
+    fn apply_extension_request(
+        &mut self,
+        record: &Value,
+        changed: &mut Vec<usize>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.open_dialog(record, changed, cx) {
+            return;
+        }
         let method = record["method"].as_str().unwrap_or_default();
         match method {
             "notify" => {
@@ -1795,27 +1837,6 @@ impl ChatView {
                 };
                 let text = record["message"].as_str().unwrap_or_default().to_string();
                 self.push_notice(tone, text);
-            }
-            // Dialogs block pi until answered. Until they have real UI,
-            // cancel immediately so a run never hangs on an invisible prompt.
-            "select" | "confirm" | "input" | "editor" => {
-                if let Some(id) = record["id"].as_str() {
-                    let response = json!({
-                        "type": "extension_ui_response",
-                        "id": id,
-                        "cancelled": true,
-                    });
-                    if let Err(error) = self.send(response) {
-                        self.push_notice(Tone::Error, error);
-                    }
-                }
-                let title = record["title"].as_str().unwrap_or(method);
-                self.push_notice(
-                    Tone::Warning,
-                    format!(
-                        "An extension asked for the \"{title}\" dialog. Dialogs are not supported yet, so it was cancelled."
-                    ),
-                );
             }
             "set_editor_text" => {
                 if let Some(text) = record["text"].as_str() {
@@ -1839,10 +1860,13 @@ impl ChatView {
         status: Option<std::process::ExitStatus>,
         stderr_tail: String,
         changed: &mut Vec<usize>,
+        cx: &mut Context<Self>,
     ) {
         self.running = false;
         self.pending_prompt = false;
         self.finish_streaming(changed);
+        self.close_dialog(dialog::DialogState::Closed, changed, cx);
+        self.queued_dialog_answer = None;
         let status =
             status.map_or_else(|| "unknown status".to_string(), |status| status.to_string());
         let mut text = format!("pi exited ({status}).");
@@ -1880,6 +1904,9 @@ impl ChatView {
         }
         if !self.running {
             return self.pending_prompt.then(|| "Sending…".to_string());
+        }
+        if self.dialog.is_some() {
+            return Some("Waiting for your answer…".to_string());
         }
         let running_tool = self.rows.iter().rev().take(64).find_map(|row| match row {
             Row::Tool {
@@ -2285,6 +2312,7 @@ impl ChatView {
                     .children(body)
                     .into_any_element()
             }
+            Row::Dialog(dialog) => self.render_dialog(index, dialog, cx),
             Row::Notice { tone, text } => {
                 let (icon, color) = match tone {
                     Tone::Info => (IconName::Info, Color::Muted),
@@ -2312,7 +2340,10 @@ impl ChatView {
             }
         };
 
-        let forkable = !matches!(row, Row::Notice { .. } | Row::Summary { .. }) && self.can_fork();
+        let forkable = !matches!(
+            row,
+            Row::Notice { .. } | Row::Summary { .. } | Row::Dialog(_)
+        ) && self.can_fork();
         let fork_tooltip = if matches!(row, Row::User { .. }) {
             "Fork from this message"
         } else {
@@ -2826,6 +2857,7 @@ impl Focusable for ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        self.focus_pending_dialog(window, cx);
         let colors = cx.theme().colors.clone();
         let body = if self.rows.is_empty() {
             let content = match &self.connection {
@@ -2894,10 +2926,25 @@ impl Render for ChatView {
         }
         let tree_overlay = self.tree.as_ref().map(|view| self.render_tree(view, cx));
 
+        let key_context = if self.dialog_takes_keys() {
+            format!("{KEY_CONTEXT} {}", dialog::DIALOG_CONTEXT)
+        } else {
+            KEY_CONTEXT.to_string()
+        };
         v_flex()
             .relative()
-            .key_context(KEY_CONTEXT)
+            .key_context(key_context.as_str())
             .track_focus(&self.focus_handle)
+            .on_action(cx.listener(Self::dialog_up))
+            .on_action(cx.listener(Self::dialog_down))
+            .on_action(cx.listener(Self::dialog_confirm))
+            .on_action(cx.listener(Self::dialog_cancel))
+            .on_key_down(cx.listener(|this, event, window, cx| {
+                // Only while the card has the keys, not while typing in the composer.
+                if this.focus_handle.is_focused(window) {
+                    this.dialog_key_down(event, cx);
+                }
+            }))
             .on_action(cx.listener(Self::toggle_tree_action))
             .on_action(cx.listener(Self::tree_up))
             .on_action(cx.listener(Self::tree_down))
