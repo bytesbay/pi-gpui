@@ -302,10 +302,7 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
 .doom { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
 .doom-copy p { color: var(--muted); font-size: 17px; }
 .doom h2 { margin-bottom: 24px; }
-.ext-list { list-style: none; padding: 0; margin: 26px 0; display: grid; gap: 14px; }
-.ext-list li { display: grid; grid-template-columns: 118px 1fr; gap: 14px; align-items: baseline; color: var(--muted); font-size: 15px; }
-.ext-list .tag { justify-self: start; }
-.manifest { margin: 0 0 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); font-size: 13px; line-height: 1.7; overflow-x: auto; color: var(--ink); }
+.doom-copy .hint { margin-top: 24px; }
 .doom-shot { margin: 0; position: relative; }
 .doom-shot::before {
   content: "";
@@ -371,8 +368,7 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   .grid { grid-template-columns: 1fr 1fr; }
   .how { grid-template-columns: 1fr; }
   .doom { grid-template-columns: 1fr; }
-  .ext-list li { grid-template-columns: 1fr; gap: 6px; }
-  .strip { grid-template-columns: 1fr 1fr; }
+    .strip { grid-template-columns: 1fr 1fr; }
   .strip div:nth-child(3) { border-left: 0; }
   .strip div:nth-child(n + 3) { border-top: 1px solid var(--line); }
 }

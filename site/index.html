@@ -27,7 +27,7 @@
 <link rel="icon" href="/img/favicon-64.png" type="image/png" sizes="64x64">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 <link rel="preload" href="/fonts/JetBrainsMonoNL-Regular.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css">
+<link rel="stylesheet" href="/styles.css?v=3">
 
 <script type="application/ld+json">
 {
@@ -107,7 +107,7 @@
 
   <section class="demo reveal" aria-label="Pi GPUI in use">
     <div class="frame frame-window">
-      <video src="/demo.mp4" poster="/img/demo-poster.webp" width="1920" height="1214" autoplay muted loop playsinline preload="metadata" aria-label="pi asks which vibe the Horse Tinder chat should have, gets an answer from the card in the chat, then builds the feature"></video>
+      <video src="/demo.mp4?v=3" poster="/img/demo-poster.webp?v=3" width="1920" height="1214" autoplay muted loop playsinline preload="metadata" aria-label="pi asks which vibe the Horse Tinder chat should have, gets an answer from the card in the chat, then builds the feature"></video>
     </div>
     <p class="caption mono">Real session, sped up: building Horse Tinder, the Tinder for horses. pi asks a question right in the chat, then gets to work.</p>
   </section>
@@ -211,30 +211,16 @@ models · tools · extensions · your files</pre>
 
   <section id="doom" class="section doom reveal">
     <div class="doom-copy">
-      <p class="mono eyebrow">Extensions</p>
+      <p class="mono eyebrow">Hackable</p>
       <h2>Can it run DOOM?</h2>
-      <p>Yes. pi calls a <code>doom</code> tool, and a plugin draws a playable Freedoom right in that message. Click it to play, Esc gives the keyboard back. Ask again and the game moves to the new message.</p>
-      <p>DOOM is just the loudest example. The same pieces work for anything:</p>
-      <ul class="ext-list">
-        <li><span class="mono tag">pi extensions</span><span>Tools, commands, skills and prompt templates you already use with pi work here unchanged. Their questions show up in the chat.</span></li>
-        <li><span class="mono tag">app plugins</span><span>A folder with <code>plugin.json</code> and a program in any language, talking JSON lines. Add buttons to the message field, keybindings, status in the title bar.</span></li>
-        <li><span class="mono tag">live views</span><span>A plugin streams frames into a tool call and gets the keys while you play. Games today, charts and previews tomorrow.</span></li>
-      </ul>
-      <pre class="manifest mono" aria-label="plugin.json of the DOOM plugin">{
-  <span class="c-info">"id"</span>: "doom",
-  <span class="c-info">"run"</span>: ["./run.sh"],
-  <span class="c-info">"contributes"</span>: {
-    <span class="c-info">"piExtensions"</span>: ["./pi-extension.ts"],
-    <span class="c-info">"toolViews"</span>: [{ "tool": "doom", "width": 640, "height": 400 }]
-  }
-}</pre>
-      <p class="hint mono"><a href="https://github.com/bytesbay/pi-gpui/tree/main/examples/plugins/doom" rel="noopener">The DOOM plugin</a> · <a href="https://github.com/bytesbay/pi-gpui/blob/main/docs/PLUGINS.md" rel="noopener">Plugin docs</a></p>
+      <p>Yes. Pi GPUI is made to be hacked. Plugins in any language can add buttons, give pi new tools and draw live views right in the chat. If it runs on your Mac, it can run in your chat.</p>
+      <p class="hint mono"><a href="https://github.com/bytesbay/pi-gpui/blob/main/docs/PLUGINS.md" rel="noopener">How plugins work</a> · <a href="https://github.com/bytesbay/pi-gpui/tree/main/examples/plugins/doom" rel="noopener">The DOOM plugin</a></p>
     </div>
     <figure class="doom-shot">
       <div class="frame">
         <video src="/doom.mp4" poster="/img/doom-poster.webp" width="1104" height="872" autoplay muted loop playsinline preload="metadata" aria-label="Freedoom E1M1 played inside a tool call in the Pi GPUI chat"></video>
       </div>
-      <figcaption class="caption mono">Real recording: E1M1, inside a tool call.</figcaption>
+      <figcaption class="caption mono">Real recording. E1M1, inside the chat.</figcaption>
     </figure>
   </section>
 
@@ -282,6 +268,6 @@ models · tools · extensions · your files</pre>
   <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
 </footer>
 
-<script src="/main.js" defer></script>
+<script src="/main.js?v=3" defer></script>
 </body>
 </html>

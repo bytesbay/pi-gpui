@@ -11,3 +11,9 @@
 
 /demo.mp4
   Cache-Control: public, max-age=604800
+
+/*.css
+  Cache-Control: public, max-age=0, must-revalidate
+
+/*.js
+  Cache-Control: public, max-age=0, must-revalidate
