@@ -1,7 +1,7 @@
 [package]
 name = "pi-gpui"
 # The app's own version; supported pi versions are in src/pi.rs (MIN_PI, TESTED_PI).
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 publish = false
 
@@ -21,6 +21,8 @@ base64 = "0.23.1"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc = "0.2"
+# Already comes with gpui; Objective-C blocks for the folder picker's completion handler.
+block = "0.1"
 
 [profile.dev]
 # GPUI is slow in unoptimized builds; optimize dependencies, keep our code debuggable.

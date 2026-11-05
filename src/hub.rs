@@ -499,24 +499,38 @@ impl HubView {
     }
 
     fn prompt_add_workspace(&mut self, _: &AddWorkspace, _: &mut Window, cx: &mut Context<Self>) {
-        let paths = cx.prompt_for_paths(PathPromptOptions {
-            files: false,
-            directories: true,
-            multiple: true,
-            prompt: Some("Add".into()),
-        });
+        // On macOS our own picker reuses one panel; gpui's builds a new one each
+        // time and blocks the main thread while doing it.
+        #[cfg(target_os = "macos")]
+        let picker = platform::pick_folders("Add");
+        #[cfg(not(target_os = "macos"))]
+        let picker = {
+            let paths = cx.prompt_for_paths(PathPromptOptions {
+                files: false,
+                directories: true,
+                multiple: true,
+                prompt: Some("Add".into()),
+            });
+            async move {
+                match paths.await {
+                    Ok(Ok(paths)) => Ok(paths),
+                    Ok(Err(error)) => Err(error.to_string()),
+                    Err(_) => Ok(None),
+                }
+            }
+        };
         self._prompt_task = cx.spawn(async move |this, cx| {
-            let selection = paths.await;
+            let selection = picker.await;
             this.update(cx, |this, cx| {
                 match selection {
-                    Ok(Ok(Some(paths))) => {
+                    Ok(Some(paths)) => {
                         for path in paths {
                             this.add_workspace(path, cx);
                         }
                         this.save(cx);
                     }
-                    Ok(Ok(None)) | Err(_) => {}
-                    Ok(Err(error)) => {
+                    Ok(None) => {}
+                    Err(error) => {
                         this.notice = Some((
                             format!("Could not open the folder picker: {error}"),
                             Color::Warning,

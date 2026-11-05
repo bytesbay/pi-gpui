@@ -177,3 +177,86 @@ pub fn clipboard_file_paths() -> Vec<std::path::PathBuf> {
 pub fn clipboard_file_paths() -> Vec<std::path::PathBuf> {
     Vec::new()
 }
+
+/// Asks for one or more folders with the system open panel.
+///
+/// gpui builds a new `NSOpenPanel` for every prompt, and building one blocks
+/// the main thread while AppKit connects to its out-of-process panel service
+/// (about half a second the first time, 150 ms after that). We build the panel
+/// once and reuse it, so only the first prompt pays that cost.
+///
+/// Must not be polled while gpui is mid-update: call it from a spawned task.
+#[cfg(target_os = "macos")]
+pub async fn pick_folders(prompt: &str) -> Result<Option<Vec<std::path::PathBuf>>, String> {
+    use std::cell::{Cell, RefCell};
+    use std::ffi::{CStr, CString};
+
+    use block::ConcreteBlock;
+    use futures::channel::oneshot;
+    use objc::runtime::{NO, Object, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    thread_local! {
+        static PANEL: Cell<*mut Object> = const { Cell::new(std::ptr::null_mut()) };
+    }
+    const MODAL_RESPONSE_OK: isize = 1;
+
+    let prompt = CString::new(prompt).map_err(|error| error.to_string())?;
+    let (done_tx, done_rx) = oneshot::channel::<Option<Vec<std::path::PathBuf>>>();
+    // SAFETY: runs on the main thread (gpui's foreground executor). The panel
+    // is retained for the life of the app, so the pointer the completion block
+    // captures stays valid; all other messages are standard AppKit API.
+    unsafe {
+        let mut panel = PANEL.with(Cell::get);
+        if panel.is_null() {
+            panel = msg_send![class!(NSOpenPanel), openPanel];
+            if panel.is_null() {
+                return Err("NSOpenPanel is unavailable".to_string());
+            }
+            let _: *mut Object = msg_send![panel, retain];
+            PANEL.with(|cell| cell.set(panel));
+        }
+        let visible: objc::runtime::BOOL = msg_send![panel, isVisible];
+        if visible != NO {
+            // Already asking; bring it forward instead of starting a second prompt.
+            let _: () = msg_send![panel, makeKeyAndOrderFront: std::ptr::null_mut::<Object>()];
+            return Ok(None);
+        }
+        let _: () = msg_send![panel, setCanChooseDirectories: YES];
+        let _: () = msg_send![panel, setCanChooseFiles: NO];
+        let _: () = msg_send![panel, setAllowsMultipleSelection: YES];
+        let _: () = msg_send![panel, setCanCreateDirectories: YES];
+        let _: () = msg_send![panel, setResolvesAliases: NO];
+        let prompt: *mut Object =
+            msg_send![class!(NSString), stringWithUTF8String: prompt.as_ptr()];
+        let _: () = msg_send![panel, setPrompt: prompt];
+
+        let done_tx = RefCell::new(Some(done_tx));
+        let block = ConcreteBlock::new(move |response: isize| {
+            let mut paths = Vec::new();
+            if response == MODAL_RESPONSE_OK {
+                let urls: *mut Object = msg_send![panel, URLs];
+                let count: usize = if urls.is_null() { 0 } else { msg_send![urls, count] };
+                for index in 0..count {
+                    let url: *mut Object = msg_send![urls, objectAtIndex: index];
+                    let path: *mut Object = msg_send![url, path];
+                    if path.is_null() {
+                        continue;
+                    }
+                    let utf8: *const std::os::raw::c_char = msg_send![path, UTF8String];
+                    if !utf8.is_null() {
+                        paths.push(std::path::PathBuf::from(
+                            CStr::from_ptr(utf8).to_string_lossy().into_owned(),
+                        ));
+                    }
+                }
+            }
+            if let Some(done_tx) = done_tx.borrow_mut().take() {
+                let _ = done_tx.send((response == MODAL_RESPONSE_OK).then_some(paths));
+            }
+        });
+        let block = block.copy();
+        let _: () = msg_send![panel, beginWithCompletionHandler: &*block];
+    }
+    Ok(done_rx.await.unwrap_or(None))
+}

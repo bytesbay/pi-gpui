@@ -51,7 +51,7 @@ In the tree: `↑↓` move, `←→` jump between branches, `↩` go there, `⌥
   "theme": "system",              // or "Ayu Dark", "Ayu Light"
   "ui_font_family": ".SystemUIFont",
   "agent_font_size": 14,          // messages and answers
-  "buffer_font_family": "JetBrains Mono NL",  // code; Menlo if not installed
+  "buffer_font_family": "JetBrains Mono NL",  // code; bundled with the app
   "buffer_font_size": 12,
 }
 ```
@@ -80,3 +80,5 @@ script/release.sh       # tag the Cargo.toml version; CI builds and publishes th
 Rust 1.90 (pinned) and Xcode. Shaders compile at startup, so the Metal Toolchain is not needed. Set `PI_GPUI_PRETEND_VERSION=<older>` to try the update flow against a real release.
 
 Docs: [principles](docs/APP_PRINCIPLES.md), [GPUI practices](docs/GPUI_STYLE_GUIDE.md), [plugins](docs/PLUGINS.md).
+
+The app bundles [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (SIL Open Font License 1.1, `assets/fonts/OFL.txt`).

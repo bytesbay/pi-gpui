@@ -18,5 +18,7 @@ if [ -d plugins ]; then
 fi
 sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 cp resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
+# The bundled JetBrains Mono font is distributed under this license.
+cp assets/fonts/OFL.txt "$app/Contents/Resources/JetBrainsMono-OFL.txt"
 codesign --force --sign - "$app"
 echo "$app"

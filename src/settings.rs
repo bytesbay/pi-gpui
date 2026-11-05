@@ -37,8 +37,9 @@ const DEFAULT_FILE: &str = r#"// Pi GPUI settings.
   // Text size of messages and answers, in pixels.
   "agent_font_size": 14,
 
-  // Font and size of code blocks, tool output and inline code. Menlo is
-  // used when the font is not installed.
+  // Font and size of code blocks, tool output and inline code. JetBrains
+  // Mono NL comes with the app; another font that is not installed falls
+  // back to Menlo.
   "buffer_font_family": "JetBrains Mono NL",
   "buffer_font_size": 12,
 }
@@ -129,8 +130,31 @@ pub fn path() -> PathBuf {
         .join("Library/Application Support/pi-gpui/settings.json")
 }
 
+/// JetBrains Mono NL ships inside the app (SIL Open Font License 1.1, see
+/// `assets/fonts/OFL.txt`), so the default code font works on every Mac.
+fn load_bundled_fonts(cx: &mut App) {
+    let fonts = vec![
+        std::borrow::Cow::Borrowed(
+            include_bytes!("../assets/fonts/JetBrainsMonoNL-Regular.ttf").as_slice(),
+        ),
+        std::borrow::Cow::Borrowed(
+            include_bytes!("../assets/fonts/JetBrainsMonoNL-Bold.ttf").as_slice(),
+        ),
+        std::borrow::Cow::Borrowed(
+            include_bytes!("../assets/fonts/JetBrainsMonoNL-Italic.ttf").as_slice(),
+        ),
+        std::borrow::Cow::Borrowed(
+            include_bytes!("../assets/fonts/JetBrainsMonoNL-BoldItalic.ttf").as_slice(),
+        ),
+    ];
+    if let Err(error) = cx.text_system().add_fonts(fonts) {
+        eprintln!("pi-gpui: could not load the bundled fonts: {error}");
+    }
+}
+
 /// Loads (or creates) the settings file, applies it and starts watching it.
 pub fn init(cx: &mut App) {
+    load_bundled_fonts(cx);
     let path = path();
     if !path.exists() {
         if let Some(parent) = path.parent() {
