@@ -180,8 +180,11 @@ impl SelectableText {
     /// Runs, font size and line height derived from the inherited text style.
     fn text_params(&self, window: &Window, cx: &App) -> (Vec<TextRun>, Pixels, Pixels) {
         let mut style = window.text_style();
+        let code_font = crate::settings::Settings::get(cx)
+            .buffer_font_family
+            .clone();
         if self.monospace {
-            style.font_family = "Menlo".into();
+            style.font_family = code_font.clone();
         }
         if let Some(family) = &self.font_family {
             style.font_family = family.clone();
@@ -239,7 +242,7 @@ impl SelectableText {
                 run.font.style = FontStyle::Italic;
             }
             if span.code {
-                run.font.family = "Menlo".into();
+                run.font.family = code_font.clone();
                 run.background_color = Some(colors.text.opacity(0.08));
             }
             if span.strike {

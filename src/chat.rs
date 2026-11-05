@@ -327,6 +327,8 @@ pub struct ChatView {
     plugins: Entity<PluginRegistry>,
     _plugins_subscription: Subscription,
     _details_subscription: Subscription,
+    /// Fonts and the theme change row heights and colors: re-measure.
+    _appearance_subscriptions: [Subscription; 2],
     /// Parsed answer per assistant row, keyed by a hash of its text.
     markdown_cache: HashMap<usize, (u64, Rc<[Node]>)>,
     selection: Entity<TextSelection>,
@@ -371,6 +373,16 @@ impl ChatView {
             this.list_state.reset(this.rows.len());
             cx.notify();
         });
+        let appearance_subscriptions = [
+            cx.observe_global::<crate::settings::Settings>(|this, cx| {
+                this.list_state.reset(this.rows.len());
+                cx.notify();
+            }),
+            cx.observe_global::<crate::ui::Theme>(|this, cx| {
+                this.list_state.reset(this.rows.len());
+                cx.notify();
+            }),
+        ];
         let focus_handle = cx.focus_handle();
         let selection = cx.new(|_| TextSelection::new(focus_handle.clone()));
         let selection_subscription = cx.observe(&selection, |_, _, cx| cx.notify());
@@ -419,6 +431,7 @@ impl ChatView {
             plugins,
             _plugins_subscription: plugins_subscription,
             _details_subscription: details_subscription,
+            _appearance_subscriptions: appearance_subscriptions,
             markdown_cache: HashMap::new(),
             selection,
             _selection_subscription: selection_subscription,
@@ -2860,8 +2873,8 @@ impl Render for ChatView {
             .size_full()
             .bg(colors.editor_background)
             .text_color(colors.text)
-            .text_size(px(14.))
-            .line_height(px(21.))
+            .text_size(px(crate::settings::Settings::get(cx).agent_font_size))
+            .line_height(px(crate::settings::Settings::get(cx).agent_line_height()))
             .children(self.render_connection_banner(cx))
             .child(body)
             .child(self.render_composer(window, cx))

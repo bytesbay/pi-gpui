@@ -12,6 +12,7 @@ use gpui::{
 use pulldown_cmark::{CodeBlockKind, Event, HeadingLevel, Options, Parser, Tag, TagEnd};
 
 use crate::selectable::{SelectableText, SpanStyle, TextSelection};
+use crate::settings::Settings;
 use crate::ui::prelude::*;
 
 /// Text plus styled byte ranges (sorted, not overlapping).
@@ -325,16 +326,9 @@ fn heading_level(level: HeadingLevel) -> u8 {
     }
 }
 
-// Metrics from Zed's agent markdown style. Zed's body is `rem`-based; here the
-// body is the app's 14 px and everything else keeps Zed's proportions.
-const BODY_SIZE: f32 = 14.;
-/// `paragraph_line_height: rems(1.3)` with GPUI's 16 px rem.
-const BODY_LINE_HEIGHT: f32 = 21.;
+// Spacing from Zed's agent markdown style. Text sizes come from the
+// settings (`agent_font_size`, `buffer_font_*`), with Zed's proportions.
 const PARAGRAPH_SPACING: f32 = 8.;
-/// `agent_buffer_font_size` and the "comfortable" buffer line height (1.618).
-const CODE_SIZE: f32 = 12.;
-const CODE_LINE_HEIGHT: f32 = 19.5;
-const CODE_FONT: &str = "Menlo";
 
 /// Renders parsed markdown. `key` must be unique and stable per message: it
 /// identifies text blocks for selection and element ids.
@@ -345,12 +339,21 @@ pub fn render(
     window: &mut Window,
     cx: &App,
 ) -> AnyElement {
-    let renderer = Renderer { selection, cx };
+    let settings = Settings::get(cx);
+    let renderer = Renderer {
+        selection,
+        cx,
+        body: settings.agent_font_size,
+        body_line: settings.agent_line_height(),
+        code: settings.buffer_font_size,
+        code_line: settings.buffer_line_height(),
+        code_font: settings.buffer_font_family.clone(),
+    };
     let last = nodes.len().saturating_sub(1);
     v_flex()
         .w_full()
-        .text_size(px(BODY_SIZE))
-        .line_height(px(BODY_LINE_HEIGHT))
+        .text_size(px(renderer.body))
+        .line_height(px(renderer.body_line))
         .children(nodes.iter().enumerate().map(|(index, node)| {
             // The message row has its own spacing: drop the outer margins.
             let edge = Edges {
@@ -371,13 +374,18 @@ struct Edges {
 struct Renderer<'a> {
     selection: &'a Entity<TextSelection>,
     cx: &'a App,
+    body: f32,
+    body_line: f32,
+    code: f32,
+    code_line: f32,
+    code_font: SharedString,
 }
 
 impl Renderer<'_> {
     fn text(&self, key: String, inline: &Inline) -> SelectableText {
         SelectableText::new(key, inline.text.clone(), self.selection)
             .spans(inline.spans.clone())
-            .text_size(px(BODY_SIZE), px(BODY_LINE_HEIGHT))
+            .text_size(px(self.body), px(self.body_line))
     }
 
     fn children(&self, key: &str, nodes: &[Node], window: &mut Window) -> Vec<AnyElement> {
@@ -402,13 +410,13 @@ impl Renderer<'_> {
             Node::Heading { level, inline } => {
                 // Zed's agent heading sizes: 1.15, 1.1, 1.05, 1, 0.95, 0.875 of the body.
                 let scale = [1.15, 1.1, 1.05, 1., 0.95, 0.875][usize::from(level - 1).min(5)];
-                let size = BODY_SIZE * scale;
+                let size = self.body * scale;
                 div()
                     .mt(top(if *level == 1 { 16. } else { 24. }))
                     .mb(bottom(8.))
                     .child(
                         self.text(key.to_string(), inline)
-                            .text_size(px(size), px(BODY_LINE_HEIGHT.max(size * 1.3))),
+                            .text_size(px(size), px(self.body_line.max(size * 1.3))),
                     )
                     .into_any_element()
             }
@@ -489,8 +497,8 @@ impl Renderer<'_> {
             .child(
                 SelectableText::new(key.to_string(), text.to_string(), self.selection)
                     .spans(spans)
-                    .text_size(px(CODE_SIZE), px(CODE_LINE_HEIGHT))
-                    .font_family(CODE_FONT)
+                    .text_size(px(self.code), px(self.code_line))
+                    .font_family(self.code_font.clone())
                     .no_wrap(),
             );
         // Vertical wheel scrolling must keep moving the transcript.
@@ -537,7 +545,7 @@ impl Renderer<'_> {
     fn checkbox(&self, checked: bool) -> AnyElement {
         let colors = &self.cx.theme().colors;
         div()
-            .h(px(BODY_LINE_HEIGHT))
+            .h(px(self.body_line))
             .flex()
             .items_center()
             .child(
@@ -583,7 +591,8 @@ impl Renderer<'_> {
                 FontWeight::NORMAL
             };
             for (column, cell) in row.iter().enumerate() {
-                widths[column] = widths[column].max(text_width(&cell.text, weight, window));
+                widths[column] =
+                    widths[column].max(text_width(&cell.text, weight, self.body, window));
             }
         }
         let border = colors.border;
@@ -639,7 +648,7 @@ impl Renderer<'_> {
 }
 
 /// Unwrapped width of the widest line of `text` in the body font.
-fn text_width(text: &str, weight: FontWeight, window: &mut Window) -> Pixels {
+fn text_width(text: &str, weight: FontWeight, size: f32, window: &mut Window) -> Pixels {
     let mut font = window.text_style().font();
     font.weight = weight;
     text.split('\n')
@@ -654,12 +663,7 @@ fn text_width(text: &str, weight: FontWeight, window: &mut Window) -> Pixels {
             };
             window
                 .text_system()
-                .shape_line(
-                    SharedString::from(line.to_string()),
-                    px(BODY_SIZE),
-                    &[run],
-                    None,
-                )
+                .shape_line(SharedString::from(line.to_string()), px(size), &[run], None)
                 .width
         })
         .fold(px(0.), Pixels::max)

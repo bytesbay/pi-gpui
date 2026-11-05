@@ -20,12 +20,25 @@ use crate::pi::{self, Installation};
 use crate::platform;
 use crate::plugins::{CommandContext, PluginEvent, PluginRegistry, RunPluginCommand};
 use crate::sessions::{self, SessionSummary};
+use crate::settings::{self, Settings};
 use crate::text_input::TextInput;
 use crate::ui::AnimationTicker;
 use crate::ui::prelude::*;
 use crate::updater::{AutoUpdater, UpdateStatus};
 
-actions!(hub, [AddWorkspace, NewChat, ToggleDetails, CancelRename]);
+actions!(
+    hub,
+    [
+        AddWorkspace,
+        NewChat,
+        ToggleDetails,
+        CancelRename,
+        OpenSettings,
+        Minimize,
+        Zoom,
+        ToggleFullScreen
+    ]
+);
 
 /// ⌘1…⌘9: the n-th session in the sidebar (1-based).
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
@@ -36,6 +49,7 @@ pub struct SelectSession {
 
 const KEY_CONTEXT: &str = "Hub";
 const RENAME_CONTEXT: &str = "SessionRename";
+const SETTINGS_FIELD_CONTEXT: &str = "SettingsField";
 const SIDEBAR_WIDTH: f32 = 272.;
 const SESSIONS_PER_WORKSPACE: usize = 20;
 /// Our own title bar replaces the native one (see `main.rs`). The traffic
@@ -50,6 +64,9 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-n", NewChat, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-e", ToggleDetails, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CancelRename, Some(RENAME_CONTEXT)),
+        KeyBinding::new("cmd-,", OpenSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-m", Minimize, Some(KEY_CONTEXT)),
+        KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, Some(KEY_CONTEXT)),
     ]);
     cx.bind_keys((1..=9).map(|index| {
         KeyBinding::new(
@@ -103,6 +120,12 @@ impl Renaming {
             _ => self.row.open_chat.is_some() && self.row.open_chat == row.open_chat,
         }
     }
+}
+
+/// Text fields of the open Settings page (the other controls need no state).
+struct SettingsPage {
+    ui_font: Entity<TextInput>,
+    code_font: Entity<TextInput>,
 }
 
 struct OpenChat {
@@ -171,6 +194,8 @@ pub struct HubView {
     renaming_sessions: HashSet<PathBuf>,
     /// ⌘ is held: the sidebar shows ⌘1…⌘9 next to sessions.
     command_held: bool,
+    /// The Settings page replaces the main area while open.
+    settings_page: Option<SettingsPage>,
     focus_handle: FocusHandle,
     plugins: Entity<PluginRegistry>,
     _plugin_subscriptions: Vec<Subscription>,
@@ -187,6 +212,27 @@ impl HubView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        // "theme": "system" follows macOS light and dark mode.
+        cx.observe_window_appearance(window, |_, _, cx| settings::apply_theme(cx))
+            .detach();
+        // The page shows the current values; refresh fields not being edited.
+        cx.observe_global::<Settings>(|this: &mut Self, cx| {
+            if let Some(page) = &this.settings_page {
+                let settings = Settings::get(cx).clone();
+                for (input, value) in [
+                    (page.ui_font.clone(), settings.ui_font_family),
+                    (page.code_font.clone(), settings.buffer_font_family),
+                ] {
+                    input.update(cx, |input, cx| {
+                        if input.text() != value {
+                            input.set_text(value, cx);
+                        }
+                    });
+                }
+            }
+            cx.notify();
+        })
+        .detach();
         // Installed or updated pi in a terminal? Coming back checks again.
         cx.observe_window_activation(window, |this: &mut Self, window, cx| {
             if window.is_window_active()
@@ -243,6 +289,7 @@ impl HubView {
             renaming: None,
             renaming_sessions: HashSet::new(),
             command_held: false,
+            settings_page: None,
             focus_handle: cx.focus_handle(),
             plugins,
             _plugin_subscriptions: plugin_subscriptions,
@@ -624,6 +671,7 @@ impl HubView {
     }
 
     fn activate(&mut self, view: Entity<ChatView>, cx: &mut Context<Self>) {
+        self.settings_page = None;
         self.active_chat = Some(view);
         self.focus_active_chat = true;
         self.notice = None;
@@ -1491,7 +1539,11 @@ impl HubView {
                             div()
                                 .flex_1()
                                 .min_w(px(0.))
-                                .font_family("Menlo")
+                                .font_family(
+                                    crate::settings::Settings::get(cx)
+                                        .buffer_font_family
+                                        .clone(),
+                                )
                                 .text_size(px(12.5))
                                 .text_color(colors.text)
                                 .overflow_hidden()
@@ -1651,6 +1703,287 @@ impl HubView {
             .into_any_element()
     }
 
+    fn open_settings(&mut self, _: &OpenSettings, window: &mut Window, cx: &mut Context<Self>) {
+        let settings = Settings::get(cx).clone();
+        let text_field =
+            |value: SharedString, placeholder: &'static str, cx: &mut Context<Self>| {
+                cx.new(|cx| {
+                    let mut input = TextInput::single_line(placeholder, cx);
+                    input.set_text(value, cx);
+                    input
+                })
+            };
+        if self.settings_page.is_none() {
+            self.settings_page = Some(SettingsPage {
+                ui_font: text_field(settings.ui_font_family.clone(), ".SystemUIFont", cx),
+                code_font: text_field(settings.buffer_font_family.clone(), "Menlo", cx),
+            });
+        }
+        window.focus(&self.focus_handle);
+        cx.notify();
+    }
+
+    fn close_settings(&mut self, cx: &mut Context<Self>) {
+        if self.settings_page.take().is_some() {
+            self.focus_active_chat = true;
+            cx.notify();
+        }
+    }
+
+    /// Saves a font field when it is confirmed or loses focus.
+    fn commit_font_field(&mut self, key: &'static str, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let input = if key == "ui_font_family" {
+            &page.ui_font
+        } else {
+            &page.code_font
+        };
+        let text = input.read(cx).text().trim().to_string();
+        let current = match key {
+            "ui_font_family" => Settings::get(cx).ui_font_family.to_string(),
+            _ => Settings::get(cx).buffer_font_family.to_string(),
+        };
+        if !text.is_empty() && text != current {
+            settings::set(cx, key, json!(text));
+        }
+    }
+
+    /// Zed-style settings: each row explains a setting and changes it in
+    /// place; the JSON file stays the source of truth and is one click away.
+    fn render_settings_page(&self, page: &SettingsPage, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let current = Settings::get(cx).clone();
+        let file = cx.global::<settings::SettingsFile>();
+        let path = file.path.clone();
+        let error = file.error.clone();
+
+        let row = |title: &'static str, description: &'static str, control: AnyElement| {
+            h_flex()
+                .gap(px(24.))
+                .py(px(12.))
+                .border_b_1()
+                .border_color(colors.border_variant)
+                .child(
+                    v_flex()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .gap(px(2.))
+                        .child(Label::new(title))
+                        .child(
+                            Label::new(description)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted),
+                        ),
+                )
+                .child(div().flex_none().child(control))
+                .into_any_element()
+        };
+        let group = |title: &'static str| {
+            div().pt(px(24.)).pb(px(4.)).child(
+                Label::new(title)
+                    .size(LabelSize::Small)
+                    .color(Color::Placeholder)
+                    .weight(FontWeight::MEDIUM),
+            )
+        };
+
+        let theme_options = [
+            (settings::THEME_SYSTEM, "System"),
+            (settings::THEME_LIGHT, "Ayu Light"),
+            (settings::THEME_DARK, "Ayu Dark"),
+        ];
+        // A segmented control, as in Zed's settings.
+        let theme_control = h_flex()
+            .p(px(2.))
+            .gap(px(2.))
+            .rounded(px(7.))
+            .border_1()
+            .border_color(colors.border_variant)
+            .bg(colors.element_background)
+            .children(theme_options.into_iter().map(|(value, label)| {
+                let selected = current.theme == value;
+                div()
+                    .id(ElementId::Name(format!("theme-{value}").into()))
+                    .h(px(24.))
+                    .px(px(10.))
+                    .flex()
+                    .items_center()
+                    .rounded(px(5.))
+                    .border_1()
+                    .cursor_pointer()
+                    .when(selected, |this| {
+                        this.bg(colors.elevated_surface_background)
+                            .border_color(colors.border)
+                    })
+                    .when(!selected, |this| {
+                        this.border_color(gpui::transparent_black())
+                            .hover(|style| style.bg(colors.ghost_element_hover))
+                    })
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        settings::set(cx, "theme", json!(value));
+                    }))
+                    .child(Label::new(label).size(LabelSize::Small).color(if selected {
+                        Color::Default
+                    } else {
+                        Color::Muted
+                    }))
+            }))
+            .into_any_element();
+
+        let stepper = |key: &'static str, value: f32, cx: &mut Context<Self>| {
+            let step = |delta: f32| {
+                move |_: &gpui::ClickEvent, _: &mut Window, cx: &mut App| {
+                    let next = (value + delta).clamp(8., 32.);
+                    settings::set(cx, key, json!(next as u64));
+                }
+            };
+            let _ = cx;
+            h_flex()
+                .gap(px(4.))
+                .child(
+                    IconButton::new(
+                        ElementId::Name(format!("{key}-down").into()),
+                        IconName::Dash,
+                    )
+                    .tooltip(Tooltip::text("Smaller"))
+                    .on_click(step(-1.)),
+                )
+                .child(
+                    div()
+                        .w(px(44.))
+                        .flex()
+                        .justify_center()
+                        .child(Label::new(format!("{} px", value as u64))),
+                )
+                .child(
+                    IconButton::new(ElementId::Name(format!("{key}-up").into()), IconName::Plus)
+                        .tooltip(Tooltip::text("Larger"))
+                        .on_click(step(1.)),
+                )
+                .into_any_element()
+        };
+
+        let field = |key: &'static str, input: &Entity<TextInput>, cx: &mut Context<Self>| {
+            div()
+                .w(px(220.))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(colors.border)
+                .bg(colors.editor_background)
+                .key_context(SETTINGS_FIELD_CONTEXT)
+                .on_action(cx.listener(move |this, _: &crate::chat::Submit, _, cx| {
+                    this.commit_font_field(key, cx)
+                }))
+                .on_mouse_down_out(
+                    cx.listener(move |this, _, _, cx| this.commit_font_field(key, cx)),
+                )
+                .child(input.clone())
+                .into_any_element()
+        };
+
+        let path_label = sessions::display_path(&path);
+        let header = h_flex()
+            .gap(px(12.))
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .gap(px(2.))
+                    .child(
+                        div()
+                            .text_size(px(20.))
+                            .line_height(px(28.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("Settings"),
+                    )
+                    .child(
+                        Label::new(format!(
+                            "Saved in {path_label}. The file is the source of truth: edit it by hand or let an agent change it, and the app applies it on save."
+                        ))
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                    ),
+            )
+            .child(
+                Button::new("open-settings-file", "Open settings.json")
+                    .icon(IconName::File)
+                    .style(ButtonStyle::Filled)
+                    .on_click({
+                        let path = path.clone();
+                        move |_, _, _| open_in_editor(&path)
+                    }),
+            )
+            .child(
+                IconButton::new("close-settings", IconName::Close)
+                    .tooltip(Tooltip::text("Close settings"))
+                    .on_click(cx.listener(|this, _, _, cx| this.close_settings(cx))),
+            );
+
+        let error_banner = error.map(|error| {
+            h_flex()
+                .mt(px(16.))
+                .gap(px(8.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(6.))
+                .bg(colors.error_background)
+                .child(Icon::new(IconName::Warning).size(IconSize::XSmall).color(Color::Error))
+                .child(
+                    Label::new(format!(
+                        "settings.json could not be read, the previous settings stay in effect: {error}"
+                    ))
+                    .size(LabelSize::Small),
+                )
+        });
+
+        div()
+            .id("settings-page")
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_y_scroll()
+            .flex()
+            .justify_center()
+            .child(
+                v_flex()
+                    .w_full()
+                    .max_w(px(720.))
+                    .px(px(32.))
+                    .py(px(28.))
+                    .child(header)
+                    .children(error_banner)
+                    .child(group("Appearance"))
+                    .child(row(
+                        "Theme",
+                        "System follows the macOS appearance and switches between the two Ayu themes.",
+                        theme_control,
+                    ))
+                    .child(group("Fonts"))
+                    .child(row(
+                        "Interface font",
+                        "Font family of the whole interface. \".SystemUIFont\" is the macOS system font.",
+                        field("ui_font_family", &page.ui_font, cx),
+                    ))
+                    .child(row(
+                        "Message size",
+                        "Text size of your messages and the agent's answers.",
+                        stepper("agent_font_size", current.agent_font_size, cx),
+                    ))
+                    .child(row(
+                        "Code font",
+                        "Font family of code blocks, tool output and inline code.",
+                        field("buffer_font_family", &page.code_font, cx),
+                    ))
+                    .child(row(
+                        "Code size",
+                        "Text size of code blocks and tool output.",
+                        stepper("buffer_font_size", current.buffer_font_size, cx),
+                    )),
+            )
+            .into_any_element()
+    }
+
     fn render_title_bar(&self, window: &Window, cx: &mut Context<Self>) -> impl IntoElement {
         let colors = cx.theme().colors.clone();
         let is_active = window.is_window_active();
@@ -1731,6 +2064,18 @@ impl HubView {
                     .into_any_element(),
                 None,
             ),
+        };
+        let (breadcrumb, status) = if self.settings_page.is_some() {
+            (
+                Label::new("Settings")
+                    .size(LabelSize::Small)
+                    .weight(FontWeight::MEDIUM)
+                    .color(text_color)
+                    .into_any_element(),
+                None,
+            )
+        } else {
+            (breadcrumb, status)
         };
 
         let plugin_statuses: Vec<AnyElement> = self
@@ -1981,16 +2326,22 @@ impl Render for HubView {
 
         // Cached: sidebar ticks and hub updates reuse the chat's last frame
         // unless the chat itself was notified.
-        let main = match &self.active_chat {
-            Some(chat) => div()
-                .flex_1()
-                .min_h(px(0.))
-                .child(AnyView::from(chat.clone()).cached(StyleRefinement::default().size_full()))
-                .into_any_element(),
-            None => match &self.installation {
-                InstallationState::Failed(error) => self.render_pi_setup(error, cx),
-                _ => self.render_placeholder(cx).into_any_element(),
-            },
+        let main = if let Some(page) = &self.settings_page {
+            self.render_settings_page(page, cx)
+        } else {
+            match &self.active_chat {
+                Some(chat) => div()
+                    .flex_1()
+                    .min_h(px(0.))
+                    .child(
+                        AnyView::from(chat.clone()).cached(StyleRefinement::default().size_full()),
+                    )
+                    .into_any_element(),
+                None => match &self.installation {
+                    InstallationState::Failed(error) => self.render_pi_setup(error, cx),
+                    _ => self.render_placeholder(cx).into_any_element(),
+                },
+            }
         };
 
         v_flex()
@@ -2001,6 +2352,10 @@ impl Render for HubView {
             .on_action(cx.listener(Self::run_plugin_command))
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::select_session))
+            .on_action(cx.listener(Self::open_settings))
+            .on_action(|_: &Minimize, window, _| window.minimize_window())
+            .on_action(|_: &Zoom, window, _| window.zoom_window())
+            .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
             .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _, cx| {
                 let held = event.modifiers.platform
                     && !event.modifiers.shift
@@ -2012,6 +2367,7 @@ impl Render for HubView {
                 }
             }))
             .size_full()
+            .font_family(crate::settings::Settings::get(cx).ui_font_family.clone())
             .bg(colors.editor_background)
             .text_color(colors.text)
             .text_size(px(14.))
@@ -2105,4 +2461,18 @@ fn write_atomically(path: &Path, value: &Value) -> Result<(), String> {
     let contents = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
     fs::write(&temporary, contents).map_err(|error| error.to_string())?;
     fs::rename(&temporary, path).map_err(|error| error.to_string())
+}
+
+/// Opens a file in Zed when it is installed, otherwise in the default text editor.
+fn open_in_editor(path: &Path) {
+    let zed = Path::new("/Applications/Zed.app");
+    let mut command = std::process::Command::new("open");
+    if zed.exists() {
+        command.arg("-a").arg(zed);
+    } else {
+        command.arg("-t");
+    }
+    if let Err(error) = command.arg(path).spawn() {
+        eprintln!("pi-gpui: could not open {}: {error}", path.display());
+    }
 }

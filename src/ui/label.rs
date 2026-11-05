@@ -101,7 +101,13 @@ impl RenderOnce for Label {
             .text_color(self.color.text(cx))
             .when_some(self.weight, |this, weight| this.font_weight(weight))
             .when(self.italic, |this| this.italic())
-            .when(self.monospace, |this| this.font_family("Menlo"))
+            .when(self.monospace, |this| {
+                this.font_family(
+                    crate::settings::Settings::get(cx)
+                        .buffer_font_family
+                        .clone(),
+                )
+            })
             .when(self.truncate, |this| this.min_w(px(0.)).truncate())
             .child(self.text)
     }

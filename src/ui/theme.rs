@@ -215,12 +215,11 @@ impl Theme {
 }
 
 impl Theme {
-    /// The theme the user picked in pi-gui (preset and light/dark mode), so
-    /// both apps look the same; pi-gui's Ayu Dark when pi-gui has no choice.
-    pub fn default_theme(system_is_dark: bool) -> Self {
-        let (preset, dark) = super::pi_gui_theme::pi_gui_selection(system_is_dark)
-            .unwrap_or_else(|| ("ayu".to_string(), true));
-        super::pi_gui_theme::theme(&preset, dark)
+    /// The built-in Ayu themes, derived the way pi-gui derives its Ayu preset.
+    pub fn ayu(dark: bool) -> Self {
+        let mut theme = super::pi_gui_theme::theme("ayu", dark);
+        theme.name = if dark { "Ayu Dark" } else { "Ayu Light" };
+        theme
     }
 
     /// Values from Zed's bundled "Ayu Dark" theme (assets/themes/ayu/ayu.json,

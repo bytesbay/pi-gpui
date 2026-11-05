@@ -8,6 +8,7 @@ mod platform;
 mod plugins;
 mod selectable;
 mod sessions;
+mod settings;
 mod text_input;
 mod ui;
 mod updater;
@@ -15,14 +16,17 @@ mod updater;
 use std::path::PathBuf;
 
 use gpui::{
-    App, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, TitlebarOptions, WindowBounds,
-    WindowOptions, actions, point, prelude::*, px, size,
+    App, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType,
+    TitlebarOptions, WindowBounds, WindowOptions, actions, point, prelude::*, px, size,
 };
 
 use crate::hub::HubView;
-use crate::ui::{Assets, Theme};
+use crate::ui::Assets;
 
-actions!(app, [Quit, CheckForUpdates]);
+actions!(
+    app,
+    [Quit, CheckForUpdates, About, Hide, HideOthers, ShowAll]
+);
 
 fn main() {
     migrate_data_directory();
@@ -52,31 +56,28 @@ fn main() {
     Application::new()
         .with_assets(Assets)
         .run(move |cx: &mut App| {
-            let system_is_dark = matches!(
-                cx.window_appearance(),
-                gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
-            );
-            let theme = Theme::default_theme(system_is_dark);
-            platform::set_app_appearance(theme.is_dark());
-            cx.set_global(theme);
+            settings::init(cx);
             text_input::bind_keys(cx);
             chat::bind_keys(cx);
             hub::bind_keys(cx);
-            cx.bind_keys([KeyBinding::new("cmd-q", Quit, None)]);
+            cx.bind_keys([
+                KeyBinding::new("cmd-q", Quit, None),
+                KeyBinding::new("cmd-h", Hide, None),
+                KeyBinding::new("alt-cmd-h", HideOthers, None),
+            ]);
+            cx.on_action(|_: &Hide, cx| cx.hide());
+            cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+            cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+            cx.on_action(|_: &About, cx| {
+                cx.open_url("https://github.com/bytesbay/pi-gpui");
+            });
             cx.on_action(|_: &Quit, cx| cx.quit());
             updater::AutoUpdater::init(cx);
             highlight::preload();
             cx.on_action(|_: &CheckForUpdates, cx| {
                 updater::AutoUpdater::global(cx).update(cx, |updater, cx| updater.check(true, cx));
             });
-            cx.set_menus(vec![Menu {
-                name: "Pi GPUI".into(),
-                items: vec![
-                    MenuItem::action("Check for Updates…", CheckForUpdates),
-                    MenuItem::separator(),
-                    MenuItem::action("Quit Pi GPUI", Quit),
-                ],
-            }]);
+            cx.set_menus(app_menus());
             cx.on_window_closed(|cx| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -130,4 +131,64 @@ fn migrate_data_directory() {
     {
         eprintln!("pi-gpui: could not move {}: {error}", old.display());
     }
+}
+
+/// The macOS menu bar, laid out like Zed's.
+fn app_menus() -> Vec<Menu> {
+    use crate::text_input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
+    vec![
+        Menu {
+            name: "Pi GPUI".into(),
+            items: vec![
+                MenuItem::action("About Pi GPUI", About),
+                MenuItem::action("Check for Updates…", CheckForUpdates),
+                MenuItem::separator(),
+                MenuItem::action("Settings…", hub::OpenSettings),
+                MenuItem::separator(),
+                MenuItem::os_submenu("Services", SystemMenuType::Services),
+                MenuItem::separator(),
+                MenuItem::action("Hide Pi GPUI", Hide),
+                MenuItem::action("Hide Others", HideOthers),
+                MenuItem::action("Show All", ShowAll),
+                MenuItem::separator(),
+                MenuItem::action("Quit Pi GPUI", Quit),
+            ],
+        },
+        Menu {
+            name: "File".into(),
+            items: vec![
+                MenuItem::action("New Session", hub::NewChat),
+                MenuItem::action("Add Project…", hub::AddWorkspace),
+            ],
+        },
+        Menu {
+            name: "Edit".into(),
+            items: vec![
+                MenuItem::os_action("Undo", Undo, OsAction::Undo),
+                MenuItem::os_action("Redo", Redo, OsAction::Redo),
+                MenuItem::separator(),
+                MenuItem::os_action("Cut", Cut, OsAction::Cut),
+                MenuItem::os_action("Copy", Copy, OsAction::Copy),
+                MenuItem::os_action("Paste", Paste, OsAction::Paste),
+                MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            ],
+        },
+        Menu {
+            name: "View".into(),
+            items: vec![
+                MenuItem::action("Session Tree", chat::ToggleTree),
+                MenuItem::action("Change Model", chat::ToggleModelPicker),
+                MenuItem::action("Expand or Collapse Step Details", hub::ToggleDetails),
+                MenuItem::separator(),
+                MenuItem::action("Enter Full Screen", hub::ToggleFullScreen),
+            ],
+        },
+        Menu {
+            name: "Window".into(),
+            items: vec![
+                MenuItem::action("Minimize", hub::Minimize),
+                MenuItem::action("Zoom", hub::Zoom),
+            ],
+        },
+    ]
 }

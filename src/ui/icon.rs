@@ -49,6 +49,7 @@ icons! {
     ChevronRight => "chevron_right",
     Close => "close",
     Copy => "copy",
+    Dash => "dash",
     Ellipsis => "ellipsis",
     Eye => "eye",
     EyeOff => "eye_off",

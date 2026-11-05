@@ -1302,7 +1302,7 @@ impl Render for TextInput {
             .on_mouse_up_out(MouseButton::Left, cx.listener(Self::on_mouse_up))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .w_full()
-            .text_size(px(15.))
+            .text_size(px(if self.single_line { 13. } else { 15. }))
             .line_height(px(LINE_HEIGHT))
             .child(
                 div()
@@ -1311,8 +1311,9 @@ impl Render for TextInput {
                     .max_h(px(LINE_HEIGHT * max_lines + 18.))
                     .overflow_y_scroll()
                     .track_scroll(&self.scroll_handle)
-                    .px(px(12.))
-                    .py(px(9.))
+                    // Single-line fields sit inside other controls: compact.
+                    .px(px(if self.single_line { 8. } else { 12. }))
+                    .py(px(if self.single_line { 3. } else { 9. }))
                     .child(TextElement { input: cx.entity() }),
             )
     }

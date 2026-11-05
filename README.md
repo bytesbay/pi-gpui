@@ -20,7 +20,7 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.
 - A context ring next to the model: context used and when pi compacts, prompt cache hit rate and expiry, subscription plan limits, and token totals for the session.
 - Compaction shown in the transcript with token counts and the summary.
-- Colors follow the theme you picked in pi-gui.
+- Ayu Dark and Ayu Light themes, following macOS by default.
 - Sessions can be renamed, hidden or deleted (to the Trash).
 
 ## Keys
@@ -28,6 +28,7 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 | Keys | Action |
 |---|---|
 | `⌘N` | New session |
+| `⌘,` | Settings |
 | `⌘O` | Add project |
 | `⌘1` … `⌘9` | Open the n-th session (hold `⌘` to see numbers) |
 | `⌘⇧T` | Session tree |
@@ -38,6 +39,20 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 | `/` | Command menu |
 
 In the tree: `↑↓` move, `←→` jump between branches, `↩` go there, `⌥↩` go there and summarize the branch you leave, `⌘↩` fork from your message.
+
+## Settings
+
+`~/Library/Application Support/pi-gpui/settings.json` is the source of truth. The app applies it as soon as it is saved, so you or a pi agent can edit it directly; the Settings page (`⌘,`) writes the same file and keeps its comments.
+
+```jsonc
+{
+  "theme": "system",              // or "Ayu Dark", "Ayu Light"
+  "ui_font_family": ".SystemUIFont",
+  "agent_font_size": 14,          // messages and answers
+  "buffer_font_family": "Menlo",  // code blocks, tool output, inline code
+  "buffer_font_size": 12,
+}
+```
 
 ## Compatibility
 

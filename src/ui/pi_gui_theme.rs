@@ -5,8 +5,6 @@
 //! and of its preset table; the selected preset and mode are read from
 //! pi-gui's `ui-state.json`, which is only read, never written.
 
-use std::path::PathBuf;
-
 use gpui::{Hsla, Rgba};
 
 use super::theme::{SyntaxColors, Theme, ThemeColors};
@@ -133,27 +131,6 @@ const PRESETS: &[(&str, &str, Seed, Seed)] = &[
         ),
     ),
 ];
-
-/// pi-gui's choice: preset id and whether it wants the dark variant.
-/// `None` when pi-gui is not installed or has no saved choice.
-pub fn pi_gui_selection(system_is_dark: bool) -> Option<(String, bool)> {
-    let path = home()?.join("Library/Application Support/pi/ui-state.json");
-    let state: serde_json::Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
-    let preset = state["themePresetId"]
-        .as_str()
-        .unwrap_or("default")
-        .to_string();
-    let dark = match state["themeMode"].as_str() {
-        Some("light") => false,
-        Some("dark") => true,
-        _ => system_is_dark,
-    };
-    Some((preset, dark))
-}
-
-fn home() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(PathBuf::from)
-}
 
 /// The theme pi-gui shows for `preset_id` (unknown ids fall back to
 /// pi-gui's default preset, as pi-gui does).
