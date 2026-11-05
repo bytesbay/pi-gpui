@@ -17,6 +17,9 @@ pub const THEME_SYSTEM: &str = "system";
 pub const THEME_DARK: &str = "Ayu Dark";
 pub const THEME_LIGHT: &str = "Ayu Light";
 pub const THEMES: [&str; 2] = [THEME_DARK, THEME_LIGHT];
+const DEFAULT_BUFFER_FONT: &str = "JetBrains Mono NL";
+/// Ships with macOS; used when the configured code font is missing.
+const FALLBACK_BUFFER_FONT: &str = "Menlo";
 const POLL_INTERVAL: Duration = Duration::from_secs(1);
 
 const DEFAULT_FILE: &str = r#"// Pi GPUI settings.
@@ -34,8 +37,9 @@ const DEFAULT_FILE: &str = r#"// Pi GPUI settings.
   // Text size of messages and answers, in pixels.
   "agent_font_size": 14,
 
-  // Font and size of code blocks, tool output and inline code.
-  "buffer_font_family": "Menlo",
+  // Font and size of code blocks, tool output and inline code. Menlo is
+  // used when the font is not installed.
+  "buffer_font_family": "JetBrains Mono NL",
   "buffer_font_size": 12,
 }
 "#;
@@ -55,7 +59,7 @@ impl Default for Settings {
             theme: THEME_SYSTEM.to_string(),
             ui_font_family: ".SystemUIFont".into(),
             agent_font_size: 14.,
-            buffer_font_family: "Menlo".into(),
+            buffer_font_family: DEFAULT_BUFFER_FONT.into(),
             buffer_font_size: 12.,
         }
     }
@@ -170,8 +174,22 @@ fn reload_if_changed(cx: &mut App) {
     let file = cx.global_mut::<SettingsFile>();
     file.modified = modified;
     match parsed {
-        Ok(settings) => {
+        Ok(mut settings) => {
             file.error = None;
+            // A code font that is not installed would fall back to a
+            // proportional font; use Menlo instead.
+            let installed = cx
+                .text_system()
+                .all_font_names()
+                .iter()
+                .any(|name| *name == settings.buffer_font_family.as_ref());
+            if !installed {
+                eprintln!(
+                    "pi-gpui: code font \"{}\" is not installed; using {FALLBACK_BUFFER_FONT}",
+                    settings.buffer_font_family
+                );
+                settings.buffer_font_family = FALLBACK_BUFFER_FONT.into();
+            }
             let theme_changed = Settings::get(cx).theme != settings.theme;
             if *Settings::get(cx) != settings {
                 cx.set_global(settings);

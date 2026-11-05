@@ -51,7 +51,7 @@ In the tree: `↑↓` move, `←→` jump between branches, `↩` go there, `⌥
   "theme": "system",              // or "Ayu Dark", "Ayu Light"
   "ui_font_family": ".SystemUIFont",
   "agent_font_size": 14,          // messages and answers
-  "buffer_font_family": "Menlo",  // code blocks, tool output, inline code
+  "buffer_font_family": "JetBrains Mono NL",  // code; Menlo if not installed
   "buffer_font_size": 12,
 }
 ```

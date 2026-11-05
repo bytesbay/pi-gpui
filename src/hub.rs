@@ -1718,7 +1718,7 @@ impl HubView {
         if self.settings_page.is_none() {
             self.settings_page = Some(SettingsPage {
                 ui_font: text_field(settings.ui_font_family.clone(), ".SystemUIFont", cx),
-                code_font: text_field(settings.buffer_font_family.clone(), "Menlo", cx),
+                code_font: text_field(settings.buffer_font_family.clone(), "JetBrains Mono NL", cx),
             });
         }
         window.focus(&self.focus_handle);
