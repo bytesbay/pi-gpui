@@ -18,6 +18,7 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 - Fork from any message.
 - Per-session model and thinking level, without touching pi's defaults.
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.
+- A context ring next to the model: context used and when pi compacts, prompt cache hit rate and expiry, subscription plan limits, and token totals for the session.
 - Compaction shown in the transcript with token counts and the summary.
 - Colors follow the theme you picked in pi-gui.
 - Sessions can be renamed, hidden or deleted (to the Trash).

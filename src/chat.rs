@@ -3,6 +3,7 @@
 mod overlays;
 mod slash;
 mod tree;
+mod usage;
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -302,6 +303,16 @@ pub struct ChatView {
     /// A tree navigation prompt in flight: request id and the text to put
     /// back into the composer (when moving to a user message).
     navigating: Option<(String, Option<String>)>,
+    usage_stats: Option<usage::Stats>,
+    usage_extra: Option<usage::Extra>,
+    /// Free tokens below which pi compacts, `None` when auto-compaction is off.
+    compaction_reserve: Option<u64>,
+    usage_open: bool,
+    usage_closed_at: Option<Instant>,
+    /// `/session` asked for the stats; show them as a notice too.
+    stats_notice: bool,
+    /// Re-renders the open popover every second for the cache countdown.
+    _usage_tick: Task<()>,
     picker_closed_at: Option<Instant>,
     running: bool,
     rows: Vec<Row>,
@@ -379,6 +390,13 @@ impl ChatView {
             compacting: false,
             tree: None,
             navigating: None,
+            usage_stats: None,
+            usage_extra: None,
+            compaction_reserve: None,
+            usage_open: false,
+            usage_closed_at: None,
+            stats_notice: false,
+            _usage_tick: Task::ready(()),
             pending_prompt: false,
             needs_list_reset: false,
             model: None,
@@ -663,6 +681,7 @@ impl ChatView {
                 self.running = false;
                 self.pending_prompt = false;
                 self.finish_streaming(changed);
+                self.request_stats();
                 if record["aborted"].as_bool() == Some(true) {
                     self.push_notice(Tone::Warning, "Run stopped.".into());
                 }
@@ -754,6 +773,7 @@ impl ChatView {
             }
             "compaction_end" => {
                 self.compacting = false;
+                self.request_stats();
                 let state = if record["result"].is_object() {
                     SummaryState::Done
                 } else if record["aborted"].as_bool() == Some(true) {
@@ -838,6 +858,7 @@ impl ChatView {
                 rows.append(&mut self.rows);
                 self.rows = rows;
                 self.needs_list_reset = true;
+                self.request_stats();
             }
             "get_available_models" => {
                 let mut models: Vec<ModelInfo> = data["models"]
@@ -859,6 +880,7 @@ impl ChatView {
                 self.send_all([
                     json!({ "type": "get_available_thinking_levels" }),
                     json!({ "type": "get_state" }),
+                    json!({ "type": "get_session_stats" }),
                 ]);
             }
             "get_available_thinking_levels" => {
@@ -900,6 +922,14 @@ impl ChatView {
             }
             "set_session_name" => self.send_all([json!({ "type": "get_state" })]),
             "get_session_stats" => {
+                self.usage_stats = Some(usage::Stats::from_session_stats(data));
+                if let Some(model) = &self.model {
+                    self.compaction_reserve =
+                        usage::compaction_reserve(&self.workspace, &model.provider, &model.id);
+                }
+                if !std::mem::take(&mut self.stats_notice) {
+                    return;
+                }
                 let context = match (
                     data["contextUsage"]["tokens"].as_u64(),
                     data["contextUsage"]["contextWindow"].as_u64(),
@@ -953,6 +983,47 @@ impl ChatView {
                 self.push_notice(Tone::Error, error);
                 return;
             }
+        }
+    }
+
+    /// Refreshes the numbers behind the context ring (silently).
+    fn request_stats(&mut self) {
+        if matches!(self.connection, Connection::Ready(_)) {
+            let _ = self.send(json!({ "type": "get_session_stats" }));
+        }
+    }
+
+    fn toggle_usage(&mut self, cx: &mut Context<Self>) {
+        if self.usage_open {
+            self.close_usage(cx);
+            return;
+        }
+        // The click that closed it via "mouse down outside" must not reopen it.
+        if self
+            .usage_closed_at
+            .is_some_and(|closed| closed.elapsed() < PICKER_REOPEN_GUARD)
+        {
+            return;
+        }
+        self.usage_open = true;
+        self.request_stats();
+        self._usage_tick = cx.spawn(async move |this, cx| {
+            loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this.update(cx, |_, cx| cx.notify()).is_err() {
+                    return;
+                }
+            }
+        });
+        cx.notify();
+    }
+
+    fn close_usage(&mut self, cx: &mut Context<Self>) {
+        if self.usage_open {
+            self.usage_open = false;
+            self.usage_closed_at = Some(Instant::now());
+            self._usage_tick = Task::ready(());
+            cx.notify();
         }
     }
 
@@ -1066,7 +1137,10 @@ impl ChatView {
                 self.push_notice(Tone::Info, "Usage: /name <new session name>".to_string())
             }
             "name" => self.send_all([json!({ "type": "set_session_name", "name": arguments })]),
-            "session" => self.send_all([json!({ "type": "get_session_stats" })]),
+            "session" => {
+                self.stats_notice = true;
+                self.send_all([json!({ "type": "get_session_stats" })]);
+            }
             "copy" => self.send_all([json!({ "type": "get_last_assistant_text" })]),
             "export" => self.send_all([json!({ "type": "export_html" })]),
             _ => return false,
@@ -1718,7 +1792,12 @@ impl ChatView {
                         .update(cx, |composer, cx| composer.set_text(text, cx));
                 }
             }
-            // setStatus, setWidget, setTitle: no UI for them yet.
+            "setStatus" if record["statusKey"] == usage::STATUS_KEY => {
+                if let Some(extra) = record["statusText"].as_str().and_then(usage::Extra::parse) {
+                    self.usage_extra = Some(extra);
+                }
+            }
+            // Other statuses, setWidget, setTitle: no UI for them yet.
             _ => {}
         }
     }
@@ -2665,11 +2744,12 @@ impl ChatView {
                                     .px(px(8.))
                                     .pb(px(6.))
                                     .child(
-                                        div()
+                                        h_flex()
                                             .flex_1()
                                             .min_w(px(0.))
-                                            .flex()
-                                            .child(self.render_model_chip(cx)),
+                                            .gap(px(2.))
+                                            .child(self.render_model_chip(cx))
+                                            .children(self.render_usage_ring(cx)),
                                     )
                                     .child(actions),
                             ),
@@ -3054,13 +3134,20 @@ fn split_thoughts(blocks: &[String]) -> Vec<Thought> {
 }
 
 /// `200000` → `200K`, `1000000` → `1M`.
+/// "850", "128k", "7.9M", "155M".
 fn format_tokens(tokens: u64) -> String {
-    if tokens >= 1_000_000 && tokens.is_multiple_of(1_000_000) {
-        format!("{}M", tokens / 1_000_000)
-    } else if tokens >= 1_000 {
-        format!("{}K", tokens / 1_000)
-    } else {
-        tokens.to_string()
+    match tokens {
+        0..1_000 => tokens.to_string(),
+        1_000..1_000_000 => format!("{}k", tokens / 1_000),
+        1_000_000..10_000_000 => {
+            let tenths = tokens / 100_000;
+            if tenths.is_multiple_of(10) {
+                format!("{}M", tenths / 10)
+            } else {
+                format!("{}.{}M", tenths / 10, tenths % 10)
+            }
+        }
+        _ => format!("{}M", tokens / 1_000_000),
     }
 }
 
@@ -3221,9 +3308,11 @@ mod tests {
 
     #[test]
     fn token_counts_are_short() {
-        assert_eq!(format_tokens(200_000), "200K");
+        assert_eq!(format_tokens(850), "850");
+        assert_eq!(format_tokens(200_000), "200k");
         assert_eq!(format_tokens(1_000_000), "1M");
-        assert_eq!(format_tokens(128_000), "128K");
+        assert_eq!(format_tokens(7_940_000), "7.9M");
+        assert_eq!(format_tokens(155_300_000), "155M");
     }
 
     #[test]

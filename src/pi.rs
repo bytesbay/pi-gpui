@@ -329,6 +329,8 @@ pub fn bridge_extension() -> Option<&'static Path> {
         let dir = crate::sessions::home_directory()?
             .join("Library/Application Support/pi-gpui/extensions");
         let path = dir.join("pi-gpui-bridge.ts");
+        // Left over from when the app was called Pi GPU UI.
+        let _ = std::fs::remove_file(dir.join("pi-gpu-ui-bridge.ts"));
         if std::fs::read_to_string(&path).ok().as_deref() != Some(SOURCE) {
             let written =
                 std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, SOURCE));
