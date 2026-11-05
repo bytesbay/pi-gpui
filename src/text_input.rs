@@ -19,6 +19,7 @@ use gpui::{
 };
 use unicode_segmentation::*;
 
+use crate::attachments::{self, Attachment, AttachmentKind};
 use crate::ui::ActiveTheme as _;
 
 pub const KEY_CONTEXT: &str = "TextInput";
@@ -241,6 +242,14 @@ pub struct TextInput {
     /// Text range of the last plugin insertion, so streaming results (e.g.
     /// dictation) can replace their previous partial text.
     plugin_insertion: Option<Range<usize>>,
+    /// Pasting files and images inserts them as chips (message composer only).
+    attachments_enabled: bool,
+    /// Every attachment ever added; a chip is its `[label]` token in the text,
+    /// so undo and redo keep working on plain text.
+    attachments: Vec<Attachment>,
+    /// Painted chip rectangles (window coordinates) and their attachment.
+    chip_bounds: Vec<(Bounds<Pixels>, usize)>,
+    hovered_chip: Option<usize>,
 }
 
 impl TextInput {
@@ -265,7 +274,131 @@ impl TextInput {
             scroll_handle: ScrollHandle::new(),
             scroll_to_cursor: false,
             plugin_insertion: None,
+            attachments_enabled: false,
+            attachments: Vec::new(),
+            chip_bounds: Vec::new(),
+            hovered_chip: None,
         }
+    }
+
+    /// Files and images can be pasted or dropped in; they become chips and
+    /// are sent as paths (see `submit_text`).
+    pub fn with_attachments(mut self) -> Self {
+        self.attachments_enabled = true;
+        self
+    }
+
+    /// Chip ranges in the text, sorted, with their attachment index.
+    fn chips(&self) -> Vec<(Range<usize>, usize)> {
+        let mut chips: Vec<(Range<usize>, usize)> = self
+            .attachments
+            .iter()
+            .enumerate()
+            .filter_map(|(index, attachment)| {
+                let token = attachment.token();
+                self.content
+                    .find(&token)
+                    .map(|start| (start..start + token.len(), index))
+            })
+            .collect();
+        chips.sort_by_key(|(range, _)| range.start);
+        chips
+    }
+
+    /// The text to send: chips become the paths they stand for.
+    pub fn submit_text(&self) -> String {
+        let mut text = self.content.to_string();
+        for (range, index) in self.chips().into_iter().rev() {
+            let path = self.attachments[index].path.display().to_string();
+            text.replace_range(range, &path);
+        }
+        text
+    }
+
+    /// Adds files (pasted, dropped or picked) as chips at the cursor.
+    pub fn attach_paths(&mut self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        for path in paths {
+            let kind = if attachments::is_image(path) {
+                AttachmentKind::Image
+            } else {
+                AttachmentKind::File
+            };
+            let linked = attachments::link_file(path).unwrap_or_else(|error| {
+                eprintln!("pi-gpui: could not link {}: {error}", path.display());
+                path.clone()
+            });
+            let name = path
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_else(|| path.display().to_string());
+            self.insert_attachment(name, linked, kind, cx);
+        }
+    }
+
+    fn insert_attachment(
+        &mut self,
+        base_label: String,
+        path: std::path::PathBuf,
+        kind: AttachmentKind,
+        cx: &mut Context<Self>,
+    ) {
+        // Labels are unique, so a chip always maps back to one attachment.
+        let mut label = base_label.replace(['[', ']'], "");
+        let mut copy = 2;
+        while self
+            .attachments
+            .iter()
+            .any(|attachment| attachment.label == label)
+        {
+            label = format!("{} ({copy})", base_label.replace(['[', ']'], ""));
+            copy += 1;
+        }
+        let attachment = Attachment { label, path, kind };
+        let token = attachment.token();
+        self.attachments.push(attachment);
+
+        let range = self.selected_range.clone();
+        let before = self.content[..range.start].chars().next_back();
+        let after = self.content[range.end..].chars().next();
+        let text = format!(
+            "{}{token}{}",
+            if before.is_some_and(|character| !character.is_whitespace()) {
+                " "
+            } else {
+                ""
+            },
+            if after.is_none_or(|character| !character.is_whitespace()) {
+                " "
+            } else {
+                ""
+            },
+        );
+        self.record_undo(EditKind::Other);
+        self.replace(range, &text);
+        self.goal_x = None;
+        self.plugin_insertion = None;
+        cx.notify();
+    }
+
+    fn image_label(&self) -> String {
+        let count = self
+            .attachments
+            .iter()
+            .filter(|attachment| {
+                attachment.kind == AttachmentKind::Image && attachment.label.starts_with("Image ")
+            })
+            .count();
+        format!("Image {}", count + 1)
+    }
+
+    /// Moves an offset that falls inside a chip to the chip's nearer edge.
+    fn snap_out_of_chip(&self, offset: usize, prefer_end: bool) -> usize {
+        for (range, _) in self.chips() {
+            if range.start < offset && offset < range.end {
+                return if prefer_end { range.end } else { range.start };
+            }
+        }
+        offset
     }
 
     /// A one-line field (filters, search). Up and Down are left to the parent.
@@ -390,7 +523,17 @@ impl TextInput {
     }
 
     fn select_range(&mut self, range: Range<usize>, reversed: bool) {
-        self.selected_range = self.clamp_range(range);
+        let range = self.clamp_range(range);
+        // A chip is one unit: the cursor and selections never split it.
+        let range = if self.attachments.is_empty() {
+            range
+        } else if range.is_empty() {
+            let offset = self.snap_out_of_chip(range.start, false);
+            offset..offset
+        } else {
+            self.snap_out_of_chip(range.start, false)..self.snap_out_of_chip(range.end, true)
+        };
+        self.selected_range = range;
         self.selection_reversed = reversed;
         self.scroll_to_cursor = true;
     }
@@ -497,6 +640,13 @@ impl TextInput {
     }
 
     fn previous_boundary(&self, offset: usize) -> usize {
+        if let Some((range, _)) = self
+            .chips()
+            .into_iter()
+            .find(|(range, _)| range.start < offset && offset <= range.end)
+        {
+            return range.start;
+        }
         self.content[..offset]
             .grapheme_indices(true)
             .next_back()
@@ -504,6 +654,13 @@ impl TextInput {
     }
 
     fn next_boundary(&self, offset: usize) -> usize {
+        if let Some((range, _)) = self
+            .chips()
+            .into_iter()
+            .find(|(range, _)| range.start <= offset && offset < range.end)
+        {
+            return range.end;
+        }
         self.content[offset..]
             .graphemes(true)
             .next()
@@ -511,11 +668,13 @@ impl TextInput {
     }
 
     fn previous_word_start(&self, offset: usize) -> usize {
-        previous_word_start(&self.content, offset)
+        let target = previous_word_start(&self.content, offset);
+        self.snap_out_of_chip(target, false)
     }
 
     fn next_word_end(&self, offset: usize) -> usize {
-        next_word_end(&self.content, offset)
+        let target = next_word_end(&self.content, offset);
+        self.snap_out_of_chip(target, true)
     }
 
     fn word_range_at(&self, offset: usize) -> Range<usize> {
@@ -750,6 +909,30 @@ impl TextInput {
     }
 
     fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut Context<Self>) {
+        if self.attachments_enabled {
+            // Like pi's terminal UI: copied files first, then an image, then text.
+            let files = crate::platform::clipboard_file_paths();
+            if !files.is_empty() {
+                self.attach_paths(&files, cx);
+                return;
+            }
+            let image = cx.read_from_clipboard().and_then(|item| {
+                item.entries().iter().find_map(|entry| match entry {
+                    gpui::ClipboardEntry::Image(image) => Some(image.clone()),
+                    _ => None,
+                })
+            });
+            if let Some(image) = image {
+                match attachments::save_clipboard_image(&image) {
+                    Ok(path) => {
+                        let label = self.image_label();
+                        self.insert_attachment(label, path, AttachmentKind::Image, cx);
+                    }
+                    Err(error) => eprintln!("pi-gpui: could not save the pasted image: {error}"),
+                }
+                return;
+            }
+        }
         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
             let text = self.normalize(&text);
             self.record_undo(EditKind::Other);
@@ -826,6 +1009,15 @@ impl TextInput {
     fn on_mouse_move(&mut self, event: &MouseMoveEvent, _: &mut Window, cx: &mut Context<Self>) {
         if self.is_selecting {
             self.select_to(self.index_for_mouse_position(event.position), cx);
+        }
+        let hovered = self
+            .chip_bounds
+            .iter()
+            .find(|(bounds, _)| bounds.contains(&event.position))
+            .map(|(_, index)| *index);
+        if hovered != self.hovered_chip {
+            self.hovered_chip = hovered;
+            cx.notify();
         }
     }
 
@@ -1002,6 +1194,8 @@ struct PrepaintState {
     layout: Option<TextLayout>,
     cursor: Option<PaintQuad>,
     selections: Vec<PaintQuad>,
+    /// Chip backgrounds and their hover areas.
+    chips: Vec<(PaintQuad, usize)>,
 }
 
 impl TextElement {
@@ -1025,6 +1219,37 @@ impl TextElement {
             underline: None,
             strikethrough: None,
         };
+        let chips = if input.content.is_empty() {
+            Vec::new()
+        } else {
+            input.chips()
+        };
+        if !chips.is_empty() && input.marked_range.is_none() {
+            let accent = cx.theme().colors.text_accent;
+            let mut runs = Vec::new();
+            let mut position = 0;
+            for (range, _) in &chips {
+                if range.start > position {
+                    runs.push(TextRun {
+                        len: range.start - position,
+                        ..run.clone()
+                    });
+                }
+                runs.push(TextRun {
+                    len: range.len(),
+                    color: accent,
+                    ..run.clone()
+                });
+                position = range.end;
+            }
+            if position < text.len() {
+                runs.push(TextRun {
+                    len: text.len() - position,
+                    ..run
+                });
+            }
+            return (text, runs);
+        }
         let runs = match input.marked_range.as_ref() {
             Some(marked) if !input.content.is_empty() => vec![
                 TextRun {
@@ -1129,6 +1354,7 @@ impl Element for TextElement {
                 layout: None,
                 cursor: None,
                 selections: Vec::new(),
+                chips: Vec::new(),
             };
         };
         let layout = TextLayout::new(lines.into_vec(), line_height);
@@ -1196,10 +1422,47 @@ impl Element for TextElement {
             }
         }
 
+        // A rounded tag behind each chip, one per visual row it spans.
+        let mut chips = Vec::new();
+        if !input.content.is_empty() {
+            for (range, index) in input.chips() {
+                let start = layout.position_for_offset(range.start);
+                let end = layout.position_for_offset(range.end);
+                let mut row_top = start.y;
+                while row_top <= end.y {
+                    let left = if row_top == start.y { start.x } else { px(0.) };
+                    let right = if row_top == end.y {
+                        end.x
+                    } else {
+                        bounds.size.width
+                    };
+                    if right > left {
+                        let chip = Bounds::from_corners(
+                            bounds.origin + point(left - px(2.), row_top + px(1.)),
+                            bounds.origin + point(right + px(2.), row_top + line_height - px(1.)),
+                        );
+                        chips.push((
+                            gpui::quad(
+                                chip,
+                                px(4.),
+                                colors.text_accent.opacity(0.12),
+                                px(1.),
+                                colors.text_accent.opacity(0.3),
+                                gpui::BorderStyle::Solid,
+                            ),
+                            index,
+                        ));
+                    }
+                    row_top += line_height;
+                }
+            }
+        }
+
         PrepaintState {
             layout: Some(layout),
             cursor,
             selections,
+            chips,
         }
     }
 
@@ -1219,6 +1482,14 @@ impl Element for TextElement {
             ElementInputHandler::new(bounds, self.input.clone()),
             cx,
         );
+        let chip_bounds: Vec<(Bounds<Pixels>, usize)> = prepaint
+            .chips
+            .iter()
+            .map(|(quad, index)| (quad.bounds, *index))
+            .collect();
+        for (chip, _) in prepaint.chips.drain(..) {
+            window.paint_quad(chip);
+        }
         for selection in prepaint.selections.drain(..) {
             window.paint_quad(selection);
         }
@@ -1247,7 +1518,62 @@ impl Element for TextElement {
             input.last_layout = Some(layout);
             input.last_bounds = Some(bounds);
             input.scroll_to_cursor = false;
+            input.chip_bounds = chip_bounds;
         });
+    }
+}
+
+impl TextInput {
+    /// A preview above the hovered chip: the image itself, or the file path.
+    fn render_chip_preview(&self, cx: &App) -> Option<gpui::AnyElement> {
+        let index = self.hovered_chip?;
+        let attachment = self.attachments.get(index)?;
+        let (bounds, _) = self.chip_bounds.iter().find(|(_, chip)| *chip == index)?;
+        let colors = cx.theme().colors.clone();
+        let content = match attachment.kind {
+            AttachmentKind::Image => div()
+                .p(px(4.))
+                .child(
+                    gpui::img(attachment.path.clone())
+                        .max_w(px(320.))
+                        .max_h(px(240.))
+                        .object_fit(gpui::ObjectFit::Contain)
+                        .rounded(px(4.)),
+                )
+                .into_any_element(),
+            AttachmentKind::File => div()
+                .px(px(10.))
+                .py(px(6.))
+                .text_size(px(12.))
+                .text_color(colors.text_muted)
+                .child(
+                    std::fs::read_link(&attachment.path)
+                        .unwrap_or_else(|_| attachment.path.clone())
+                        .display()
+                        .to_string(),
+                )
+                .into_any_element(),
+        };
+        Some(
+            gpui::deferred(
+                gpui::anchored()
+                    .position(bounds.origin)
+                    .anchor(gpui::Corner::BottomLeft)
+                    .snap_to_window_with_margin(px(8.))
+                    .child(
+                        div()
+                            .mb(px(6.))
+                            .rounded(px(8.))
+                            .border_1()
+                            .border_color(colors.border)
+                            .bg(colors.elevated_surface_background)
+                            .shadow_lg()
+                            .child(content),
+                    ),
+            )
+            .with_priority(2)
+            .into_any_element(),
+        )
     }
 }
 
@@ -1258,8 +1584,16 @@ impl Render for TextInput {
         } else {
             MAX_VISIBLE_LINES
         };
+        let preview = self.render_chip_preview(cx);
         div()
+            .id("text-input")
             .flex()
+            .on_hover(cx.listener(|this, hovered: &bool, _, cx| {
+                if !*hovered && this.hovered_chip.take().is_some() {
+                    cx.notify();
+                }
+            }))
+            .children(preview)
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle(cx))
             .cursor(CursorStyle::IBeam)

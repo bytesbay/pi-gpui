@@ -18,7 +18,7 @@ pub use button::{Button, ButtonSize, ButtonStyle, IconButton, TintColor};
 pub use icon::{Assets, Icon, IconName, IconSize, Spinner};
 pub use label::{Label, LabelSize, LoadingLabel};
 pub use list_item::{Indicator, KeyHint, ListItem, Tooltip};
-pub use theme::{ActiveTheme, Color, SyntaxColors, Theme};
+pub use theme::{ActiveTheme, Color, SyntaxColors, Theme, ThemeColors};
 
 use gpui::{Div, div, prelude::*};
 

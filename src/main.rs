@@ -1,3 +1,4 @@
+mod attachments;
 mod chat;
 mod highlight;
 mod hub;

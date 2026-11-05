@@ -124,3 +124,56 @@ pub fn move_to_trash(path: &std::path::Path) -> Result<(), String> {
 pub fn move_to_trash(path: &std::path::Path) -> Result<(), String> {
     std::fs::remove_file(path).map_err(|error| error.to_string())
 }
+
+/// Files copied in Finder (file URLs on the general pasteboard).
+#[cfg(target_os = "macos")]
+pub fn clipboard_file_paths() -> Vec<std::path::PathBuf> {
+    use std::ffi::{CStr, CString};
+
+    use objc::runtime::{Class, Object, YES};
+    use objc::{class, msg_send, sel, sel_impl};
+
+    let Ok(key) = CString::new("NSPasteboardURLReadingFileURLsOnlyKey") else {
+        return Vec::new();
+    };
+    let mut paths = Vec::new();
+    // SAFETY: standard AppKit/Foundation calls on the main thread; every
+    // returned object is checked for null before use.
+    unsafe {
+        let pasteboard: *mut Object = msg_send![class!(NSPasteboard), generalPasteboard];
+        if pasteboard.is_null() {
+            return paths;
+        }
+        let url_class: *const Class = class!(NSURL);
+        let classes: *mut Object = msg_send![class!(NSArray), arrayWithObject: url_class];
+        let key: *mut Object = msg_send![class!(NSString), stringWithUTF8String: key.as_ptr()];
+        let yes: *mut Object = msg_send![class!(NSNumber), numberWithBool: YES];
+        let options: *mut Object =
+            msg_send![class!(NSDictionary), dictionaryWithObject: yes forKey: key];
+        let urls: *mut Object =
+            msg_send![pasteboard, readObjectsForClasses: classes options: options];
+        if urls.is_null() {
+            return paths;
+        }
+        let count: usize = msg_send![urls, count];
+        for index in 0..count {
+            let url: *mut Object = msg_send![urls, objectAtIndex: index];
+            let path: *mut Object = msg_send![url, path];
+            if path.is_null() {
+                continue;
+            }
+            let utf8: *const std::os::raw::c_char = msg_send![path, UTF8String];
+            if !utf8.is_null() {
+                paths.push(std::path::PathBuf::from(
+                    CStr::from_ptr(utf8).to_string_lossy().into_owned(),
+                ));
+            }
+        }
+    }
+    paths
+}
+
+#[cfg(not(target_os = "macos"))]
+pub fn clipboard_file_paths() -> Vec<std::path::PathBuf> {
+    Vec::new()
+}

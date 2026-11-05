@@ -15,6 +15,7 @@ Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH`
 - Projects and their pi sessions in a sidebar. Every open session runs its own pi, so switching never stops work.
 - Slash commands: pi's extension commands, prompt templates and skills, plus `/compact`, `/tree`, `/fork`, `/clone`, `/model`, `/new`, `/name`, `/session`, `/copy`, `/export`.
 - Session tree with keyboard navigation and branch summaries.
+- Paste or drop files and images into the message field. They show up as chips in the text (hover an image to preview it) and are sent as paths, like in pi's terminal: a pasted image is saved to `$TMPDIR/pi-clipboard-*.png`, a file gets a temporary link. Images in messages and tool results are shown in the transcript.
 - Fork from any message.
 - Per-session model and thinking level, without touching pi's defaults.
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.

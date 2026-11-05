@@ -20,6 +20,7 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
+use crate::attachments::{self, Picture};
 use crate::jsonl::{JsonlMessage, JsonlProcess};
 use crate::markdown::{self, Node};
 use crate::pi::{self, Installation};
@@ -220,6 +221,8 @@ enum Row {
     User {
         text: SharedString,
         steering: bool,
+        /// Pasted images (their paths are in the text) and inline images.
+        images: Vec<Picture>,
     },
     Assistant {
         text: String,
@@ -237,6 +240,8 @@ enum Row {
         detail: String,
         status: ToolStatus,
         output: String,
+        /// Images the tool returned (e.g. `read` on a picture).
+        images: Vec<Picture>,
         /// The user's choice; `None` follows the global default.
         expanded: Option<bool>,
     },
@@ -347,7 +352,7 @@ impl ChatView {
         plugins: Entity<PluginRegistry>,
         cx: &mut Context<Self>,
     ) -> Self {
-        let composer = cx.new(|cx| TextInput::new("Message pi…", cx));
+        let composer = cx.new(|cx| TextInput::new("Message pi…", cx).with_attachments());
         // The send button's state depends on the composer text.
         let composer_subscription = cx.observe(&composer, |this, composer, cx| {
             this.slash_highlight = 0;
@@ -499,7 +504,9 @@ impl ChatView {
         self.rows
             .iter()
             .find_map(|row| match row {
-                Row::User { text, .. } => Some(sessions::one_line(text, 80)),
+                Row::User { text, .. } => {
+                    Some(sessions::one_line(&attachments::display_text(text), 80))
+                }
                 _ => None,
             })
             .unwrap_or_else(|| "New session".to_string())
@@ -572,7 +579,8 @@ impl ChatView {
             self.accept_slash(index, true, window, cx);
             return;
         }
-        let text = self.composer.read(cx).text();
+        // Chips for pasted files and images become their paths here.
+        let text = self.composer.read(cx).submit_text();
         let message = text.trim();
         if message.is_empty() || !matches!(self.connection, Connection::Ready(_)) {
             return;
@@ -601,6 +609,10 @@ impl ChatView {
                 self.rows.push(Row::User {
                     text: SharedString::from(message.to_string()),
                     steering,
+                    images: attachments::image_paths_in(message)
+                        .into_iter()
+                        .map(Picture::File)
+                        .collect(),
                 });
                 self.pending_prompt = true;
                 self.composer.update(cx, |composer, cx| composer.clear(cx));
@@ -724,6 +736,7 @@ impl ChatView {
                     detail,
                     status: ToolStatus::Running,
                     output: String::new(),
+                    images: Vec::new(),
                     expanded: None,
                 });
                 if let Some(call_id) = record["toolCallId"].as_str() {
@@ -742,10 +755,16 @@ impl ChatView {
                     .as_str()
                     .and_then(|call_id| self.tool_rows.get(call_id).copied());
                 if let Some(index) = index
-                    && let Some(Row::Tool { status, output, .. }) = self.rows.get_mut(index)
+                    && let Some(Row::Tool {
+                        status,
+                        output,
+                        images,
+                        ..
+                    }) = self.rows.get_mut(index)
                 {
                     *output = preview_lines(&content_text(result));
                     if finished {
+                        *images = Picture::from_content(&result["content"]);
                         *status = if record["isError"].as_bool() == Some(true) {
                             ToolStatus::Failed
                         } else {
@@ -1974,7 +1993,11 @@ impl ChatView {
         let key = |part: &str| SharedString::from(format!("{index}:{part}"));
 
         let content = match row {
-            Row::User { text, steering } => v_flex()
+            Row::User {
+                text,
+                steering,
+                images,
+            } => v_flex()
                 .gap(px(4.))
                 .when(*steering, |this| {
                     this.child(
@@ -2002,10 +2025,13 @@ impl ChatView {
                         .bg(colors.panel_background)
                         .child(SelectableText::new(
                             key("user"),
-                            text.clone(),
+                            attachments::display_text(text),
                             &self.selection,
                         )),
                 )
+                .when(!images.is_empty(), |this| {
+                    this.child(thumbnails(index, images, &colors))
+                })
                 .into_any_element(),
             Row::Assistant {
                 text,
@@ -2070,9 +2096,11 @@ impl ChatView {
                 detail,
                 status,
                 output,
+                images,
                 expanded,
             } => {
-                let open = expanded.unwrap_or(default_open) && !output.is_empty();
+                let has_details = !output.is_empty() || !images.is_empty();
+                let open = expanded.unwrap_or(default_open) && has_details;
                 let status_icon = match status {
                     ToolStatus::Running => Spinner::new()
                         .size(IconSize::XSmall)
@@ -2112,14 +2140,14 @@ impl ChatView {
                             )
                             .child(
                                 div().flex_1().min_w(px(0.)).child(
-                                    Label::new(detail.clone())
+                                    Label::new(attachments::display_text(detail))
                                         .size(LabelSize::Small)
                                         .color(Color::Muted)
                                         .monospace()
                                         .truncate(),
                                 ),
                             )
-                            .when(!output.is_empty(), |this| {
+                            .when(has_details, |this| {
                                 this.child(disclosure_button(
                                     ("tool-disclosure", index),
                                     open,
@@ -2144,7 +2172,12 @@ impl ChatView {
                                     .size(LabelSize::XSmall)
                                     .color(Color::Muted)
                                     .monospace(),
-                                ),
+                                )
+                                .when(!images.is_empty(), |this| {
+                                    this.child(
+                                        div().pt(px(6.)).child(thumbnails(index, images, &colors)),
+                                    )
+                                }),
                         )
                     })
                     .into_any_element()
@@ -2735,6 +2768,20 @@ impl ChatView {
                         v_flex()
                             .relative()
                             .when(slash_menu.is_some(), |this| this.key_context(SLASH_CONTEXT))
+                            // Files dropped from Finder become chips, like pasted ones.
+                            .on_drop(cx.listener(
+                                |this, paths: &gpui::ExternalPaths, window, cx| {
+                                    let paths = paths.paths().to_vec();
+                                    this.composer.update(cx, |composer, cx| {
+                                        composer.attach_paths(&paths, cx)
+                                    });
+                                    window.focus(&this.composer.read(cx).focus_handle(cx));
+                                },
+                            ))
+                            .drag_over::<gpui::ExternalPaths>({
+                                let border = colors.text_accent;
+                                move |style, _, _, _| style.border_color(border)
+                            })
                             .children(slash_menu)
                             .w_full()
                             .rounded(px(8.))
@@ -2912,10 +2959,14 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
     let mut tool_rows = HashMap::new();
     for message in messages {
         match message["role"].as_str().unwrap_or_default() {
-            "user" => rows.push(Row::User {
-                text: SharedString::from(sessions::message_text(message)),
-                steering: false,
-            }),
+            "user" => {
+                let text = sessions::message_text(message);
+                rows.push(Row::User {
+                    images: Picture::of_message(&message["content"], &text),
+                    text: SharedString::from(text),
+                    steering: false,
+                })
+            }
             "assistant" => {
                 let (text, thinking) = assistant_blocks(message);
                 let error = stop_error(message);
@@ -2937,6 +2988,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                         detail: tool_detail(&block["arguments"]),
                         status: ToolStatus::Running,
                         output: String::new(),
+                        images: Vec::new(),
                         expanded: None,
                     });
                     if let Some(id) = block["id"].as_str() {
@@ -2949,9 +3001,15 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                     .as_str()
                     .and_then(|id| tool_rows.get(id).copied());
                 if let Some(index) = index
-                    && let Some(Row::Tool { status, output, .. }) = rows.get_mut(index)
+                    && let Some(Row::Tool {
+                        status,
+                        output,
+                        images,
+                        ..
+                    }) = rows.get_mut(index)
                 {
                     *output = preview_lines(&content_text(message));
+                    *images = Picture::from_content(&message["content"]);
                     *status = if message["isError"].as_bool() == Some(true) {
                         ToolStatus::Failed
                     } else {
@@ -2968,6 +3026,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                     ToolStatus::Failed
                 },
                 output: preview_lines(message["output"].as_str().unwrap_or_default()),
+                images: Vec::new(),
                 expanded: None,
             }),
             "compactionSummary" => rows.push(Row::Summary {
@@ -3080,6 +3139,38 @@ fn text_hash(text: &str) -> u64 {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     text.hash(&mut hasher);
     hasher.finish()
+}
+
+/// Image previews under a message or tool result. A click on an image file
+/// opens it.
+fn thumbnails(row: usize, images: &[Picture], colors: &crate::ui::ThemeColors) -> AnyElement {
+    h_flex()
+        .flex_wrap()
+        .gap(px(8.))
+        .children(images.iter().enumerate().map(|(position, picture)| {
+            let path = match picture {
+                Picture::File(path) => Some(path.clone()),
+                Picture::Data(_) => None,
+            };
+            div()
+                .id(ElementId::Name(format!("thumb-{row}-{position}").into()))
+                .rounded(px(6.))
+                .border_1()
+                .border_color(colors.border_variant)
+                .overflow_hidden()
+                .when_some(path, |this, path| {
+                    this.cursor_pointer().on_click(move |_, _, cx| {
+                        cx.open_url(&format!("file://{}", path.display()))
+                    })
+                })
+                .child(
+                    gpui::img(picture.source())
+                        .max_w(px(320.))
+                        .max_h(px(200.))
+                        .object_fit(gpui::ObjectFit::Contain),
+                )
+        }))
+        .into_any_element()
 }
 
 /// A small chevron button that opens or closes a detail section.

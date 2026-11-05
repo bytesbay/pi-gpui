@@ -149,7 +149,10 @@ fn read_title(path: &Path, workspace: &Path) -> Option<String> {
     }
 
     let title = session_name.or(first_user_text)?;
-    Some(one_line(&title, TITLE_MAX_CHARS))
+    Some(one_line(
+        &crate::attachments::display_text(&title),
+        TITLE_MAX_CHARS,
+    ))
 }
 
 /// Who else holds `session` open, according to pi-gui's lease convention.
