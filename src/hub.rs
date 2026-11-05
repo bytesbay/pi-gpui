@@ -746,6 +746,7 @@ impl HubView {
     /// hub (notifying a view also dirties its ancestors), so it does not count.
     fn sidebar_is_animating(&self, cx: &App) -> bool {
         matches!(self.installation, InstallationState::Checking)
+            || self.pi_updating.is_some()
             || self.opening_session.is_some()
             || self.plugins.read(cx).has_busy_status()
             || self.workspaces.iter().any(|entry| {
@@ -2035,6 +2036,7 @@ impl HubView {
         self.pi_updating = Some(label.clone());
         let installation = installation.clone();
         let updates_pi = args.is_empty();
+        let target = args.clone();
         let job = cx.background_spawn(async move {
             let args: Vec<&str> = args.iter().map(String::as_str).collect();
             pi_updates::run(&installation, &args)
@@ -2049,6 +2051,18 @@ impl HubView {
                 } else {
                     ""
                 };
+                if result.is_ok() {
+                    // Drop what was just updated right away; the re-check
+                    // below takes a few seconds (npm, `pi list`).
+                    match target.as_slice() {
+                        [] => this.pi_updates.pi = None,
+                        [flag] if flag == "--extensions" => this.pi_updates.packages.clear(),
+                        sources => this
+                            .pi_updates
+                            .packages
+                            .retain(|package| !sources.contains(&package.source)),
+                    }
+                }
                 this.notice = Some(match result {
                     Ok(_) => (format!("{label}: done.{reopen}"), Color::Default),
                     Err(error) => (format!("{label} failed: {error}"), Color::Warning),
