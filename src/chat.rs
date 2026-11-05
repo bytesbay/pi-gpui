@@ -2,6 +2,7 @@
 
 mod dialog;
 mod overlays;
+mod plugin_view;
 mod slash;
 mod tree;
 mod usage;
@@ -59,6 +60,7 @@ actions!(
         DialogDown,
         DialogConfirm,
         DialogCancel,
+        ReleasePluginView,
     ]
 );
 
@@ -111,6 +113,11 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("down", DialogDown, Some(dialog::DIALOG_CONTEXT)),
         KeyBinding::new("enter", DialogConfirm, Some(dialog::DIALOG_CONTEXT)),
         KeyBinding::new("escape", DialogCancel, Some(dialog::DIALOG_CONTEXT)),
+        KeyBinding::new(
+            "escape",
+            ReleasePluginView,
+            Some(plugin_view::PLUGIN_VIEW_CONTEXT),
+        ),
     ]);
 }
 
@@ -254,6 +261,8 @@ enum Row {
         images: Vec<Picture>,
         /// The user's choice; `None` follows the global default.
         expanded: Option<bool>,
+        /// The tool call id when a plugin draws a live view in this row.
+        view: Option<SharedString>,
     },
     Notice {
         tone: Tone,
@@ -357,6 +366,11 @@ pub struct ChatView {
     focus_dialog: bool,
     /// Free text typed for a select; answers the input it leads to.
     queued_dialog_answer: Option<String>,
+    /// Keyboard focus of the plugin view the user clicked into.
+    view_focus: FocusHandle,
+    /// The call whose view has the keyboard, and the modifiers it last saw.
+    focused_view: Option<(SharedString, gpui::Modifiers)>,
+    _frames_subscription: Subscription,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -382,6 +396,9 @@ impl ChatView {
         });
         // Plugin buttons in the composer reflect plugin state (e.g. recording).
         let plugins_subscription = cx.observe(&plugins, |_, _, cx| cx.notify());
+        // Plugin views repaint with every frame.
+        let frames = plugins.read(cx).frames().clone();
+        let frames_subscription = cx.observe(&frames, |_, _, cx| cx.notify());
         // The global default wins again: forget per-item choices. Heights change.
         let details_subscription = cx.observe_global::<DetailsExpanded>(|this, cx| {
             for row in &mut this.rows {
@@ -462,6 +479,9 @@ impl ChatView {
             dialog: None,
             focus_dialog: false,
             queued_dialog_answer: None,
+            view_focus: cx.focus_handle(),
+            focused_view: None,
+            _frames_subscription: frames_subscription,
         };
         this.start_process(cx);
         this
@@ -537,10 +557,12 @@ impl ChatView {
         // Replacing the task drops the previous pump before a new process starts.
         self._events_task = Task::ready(());
         self.running = false;
+        let extensions = self.plugins.read(cx).pi_extensions().to_vec();
         let spawned = pi::spawn_pi(
             &self.installation,
             &self.workspace,
             self.session_file.as_deref(),
+            &extensions,
         );
         match spawned {
             Ok((process, receiver)) => {
@@ -772,10 +794,12 @@ impl ChatView {
                     output: String::new(),
                     images: Vec::new(),
                     expanded: None,
+                    view: None,
                 });
                 if let Some(call_id) = record["toolCallId"].as_str() {
                     self.tool_rows
                         .insert(call_id.to_string(), self.rows.len() - 1);
+                    self.open_plugin_view(record, call_id, cx);
                 }
             }
             "tool_execution_update" | "tool_execution_end" => {
@@ -797,8 +821,12 @@ impl ChatView {
                     }) = self.rows.get_mut(index)
                 {
                     *output = preview_lines(&content_text(result));
+                    // Partial results may carry images too (a live preview, frames).
+                    let pictures = Picture::from_content(&result["content"]);
+                    if finished || !pictures.is_empty() {
+                        *images = pictures;
+                    }
                     if finished {
-                        *images = Picture::from_content(&result["content"]);
                         *status = if record["isError"].as_bool() == Some(true) {
                             ToolStatus::Failed
                         } else {
@@ -2125,7 +2153,11 @@ impl ChatView {
                 output,
                 images,
                 expanded,
+                view,
             } => {
+                let plugin_view = view
+                    .as_ref()
+                    .map(|call_id| self.render_plugin_view(call_id, name, cx));
                 let has_details = !output.is_empty() || !images.is_empty();
                 let open = expanded.unwrap_or(default_open) && has_details;
                 let status_icon = match status {
@@ -2207,6 +2239,7 @@ impl ChatView {
                                 }),
                         )
                     })
+                    .children(plugin_view)
                     .into_any_element()
             }
             Row::Summary {
@@ -2858,6 +2891,7 @@ impl Focusable for ChatView {
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focus_pending_dialog(window, cx);
+        self.sync_plugin_view_focus(window, cx);
         let colors = cx.theme().colors.clone();
         let body = if self.rows.is_empty() {
             let content = match &self.connection {
@@ -2939,6 +2973,7 @@ impl Render for ChatView {
             .on_action(cx.listener(Self::dialog_down))
             .on_action(cx.listener(Self::dialog_confirm))
             .on_action(cx.listener(Self::dialog_cancel))
+            .on_action(cx.listener(Self::release_plugin_view))
             .on_key_down(cx.listener(|this, event, window, cx| {
                 // Only while the card has the keys, not while typing in the composer.
                 if this.focus_handle.is_focused(window) {
@@ -3037,6 +3072,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                         output: String::new(),
                         images: Vec::new(),
                         expanded: None,
+                        view: None,
                     });
                     if let Some(id) = block["id"].as_str() {
                         tool_rows.insert(id.to_string(), rows.len() - 1);
@@ -3075,6 +3111,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                 output: preview_lines(message["output"].as_str().unwrap_or_default()),
                 images: Vec::new(),
                 expanded: None,
+                view: None,
             }),
             "compactionSummary" => rows.push(Row::Summary {
                 kind: SummaryKind::Compaction,

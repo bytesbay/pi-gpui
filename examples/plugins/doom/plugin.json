@@ -1,0 +1,13 @@
+{
+  "id": "doom",
+  "name": "DOOM",
+  "version": "0.1.0",
+  "protocol": 1,
+  "run": ["./run.sh"],
+  "contributes": {
+    "piExtensions": ["./pi-extension.ts"],
+    "toolViews": [
+      { "tool": "doom", "title": "DOOM", "width": 640, "height": 400 }
+    ]
+  }
+}

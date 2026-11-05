@@ -302,11 +302,16 @@ pub fn spawn_pi(
     installation: &Installation,
     workspace: &Path,
     session: Option<&Path>,
+    extensions: &[PathBuf],
 ) -> std::io::Result<(JsonlProcess, mpsc::Receiver<JsonlMessage>)> {
     let mut command = Command::new(&installation.executable);
     command.args(["--mode", "rpc"]);
     if let Some(bridge) = bridge_extension() {
         command.arg("--extension").arg(bridge);
+    }
+    // Tools that plugins ship for the agent, e.g. one whose calls a plugin draws.
+    for extension in extensions {
+        command.arg("--extension").arg(extension);
     }
     if let Some(session) = session {
         command.arg("--session").arg(session);
@@ -353,8 +358,8 @@ pub async fn rename_session(
     name: String,
 ) -> Result<(), String> {
     use futures::StreamExt as _;
-    let (process, mut receiver) =
-        spawn_pi(&installation, &workspace, Some(&session)).map_err(|error| error.to_string())?;
+    let (process, mut receiver) = spawn_pi(&installation, &workspace, Some(&session), &[])
+        .map_err(|error| error.to_string())?;
     process
         .send(serde_json::json!({ "id": "rename", "type": "set_session_name", "name": name }))?;
     let mut result = Err("pi exited before renaming the session".to_string());

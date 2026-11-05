@@ -53,6 +53,14 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
   - `placement`: where to show a button. `composer` (the message field) is supported today.
   - `icon`: `microphone`, `terminal`, `file`, `sparkle`, `message`, `tool`, `folder`, `refresh`, `check`, `info`, `warning`.
   - `keybinding`: a GPUI keystroke (`cmd-shift-d`).
+- `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
+- `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
+
+### Live views
+
+When pi calls a tool that has a view, the app sends `view.open` and shows the plugin's frames in that tool call. A plugin streams to one call at a time: a newer call of the same tool takes the stream over, and older rows keep their last frame. Frames for other calls are dropped. Clicking a view gives it the keyboard (`view.focus`), keys arrive as `view.key`, and Esc or a click elsewhere gives the keyboard back. Release held keys when focus goes away.
+
+The [DOOM plugin](../examples/plugins/doom) is a complete example: a pi tool `doom`, and a game that runs only while the view has the keyboard.
 
 ## Protocol 1
 
@@ -64,6 +72,9 @@ Every message is a JSON object on a single line; lines end with `\n`. A message 
 |---|---|---|
 | `initialize` | `protocol`, `app`, `plugin.id`, `plugin.dir` | right after start |
 | `command.run` | `command`, `workspace?`, `session?` | the user pressed a button or keybinding |
+| `view.open` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi called a tool this plugin draws; stream to `callId` from now on |
+| `view.focus` | `callId`, `focused` | the view got or lost the keyboard |
+| `view.key` | `callId`, `key`, `down` | a key went down or up in a focused view. `key` is GPUI's name (`up`, `space`, `a`; the typed character on non-Latin layouts); modifiers come as `control`, `shift`, `alt` |
 
 ### Plugin → app
 
@@ -75,6 +86,7 @@ Every message is a JSON object on a single line; lines end with `\n`. A message 
 | `status.set` | `id`, `text`, `tone?`, `busy?` | a status item in the title bar; `busy` shows a spinner; `tone`: `info`, `warning`, `error`, `success` |
 | `status.clear` | `id` | removes a status item |
 | `notify` | `message`, `tone?` | a notice in the window |
+| `view.frame` | `callId`, `data`, `mimeType` | a frame for a live view: base64 `image/jpeg` or `image/png`. Ignored unless `callId` is the call the plugin streams to |
 | `log` | `message` | a line in the app log (stderr) |
 
 The app ignores unknown methods, so the protocol can grow without breaking older plugins.
@@ -107,7 +119,7 @@ A plugin runs with the user's permissions, like a pi extension. Install plugins 
 
 ## Planned
 
-- Canvas: frames over a separate binary channel plus keyboard input (games, charts, previews).
+- A binary channel for view frames, for larger views at full frame rate.
 - Panels and tabs described as data built from our components.
 - Highlighting grammars and themes as data.
 - Installing plugins as pi packages and a plugin list in settings.

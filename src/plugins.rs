@@ -4,16 +4,17 @@
 //! A plugin is a separate process speaking line-delimited JSON over stdio, so
 //! it can be written in any language and cannot crash or block the app.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Arc;
 
 use futures::StreamExt as _;
 use futures::channel::mpsc;
 use gpui::{
-    AppContext as _, AsyncApp, Context, EventEmitter, KeyBinding, Keystroke, SharedString, Task,
-    WeakEntity,
+    AppContext as _, AsyncApp, Context, Entity, EventEmitter, KeyBinding, Keystroke, SharedString,
+    Task, WeakEntity,
 };
 use serde_json::{Value, json};
 
@@ -49,6 +50,39 @@ pub struct StatusItem {
     pub text: SharedString,
     pub color: Color,
     pub busy: bool,
+}
+
+/// A live view a plugin draws inside the tool call rows of one tool
+/// (`contributes.toolViews`), e.g. a game for the `doom` tool.
+#[derive(Clone)]
+pub struct ToolView {
+    pub plugin_id: SharedString,
+    pub tool: SharedString,
+    pub title: SharedString,
+    /// Height divided by width.
+    pub aspect: f32,
+}
+
+/// Frames of plugin views. Separate from the registry so a frame only
+/// re-renders the chats, not everything that watches plugins.
+#[derive(Default)]
+pub struct ViewFrames {
+    /// The last frame of each tool call that showed a view. Decoded here, so
+    /// a frame paints at once (an encoded image would load asynchronously and
+    /// blink) and does not pile up in the asset cache.
+    frames: HashMap<SharedString, Arc<gpui::RenderImage>>,
+    /// The call each plugin streams to: one at a time, the newest call wins.
+    live: HashMap<SharedString, SharedString>,
+}
+
+impl ViewFrames {
+    pub fn frame(&self, call_id: &str) -> Option<Arc<gpui::RenderImage>> {
+        self.frames.get(call_id).cloned()
+    }
+
+    pub fn is_live(&self, call_id: &str) -> bool {
+        self.live.values().any(|live| live == call_id)
+    }
 }
 
 /// Where a command was invoked; sent to the plugin with `command.run`.
@@ -94,6 +128,11 @@ pub struct PluginRegistry {
     commands: Vec<PluginCommand>,
     active_commands: HashSet<SharedString>,
     statuses: Vec<StatusItem>,
+    tool_views: Vec<ToolView>,
+    /// pi extensions plugins ship (`contributes.piExtensions`), loaded into
+    /// every pi this app starts.
+    pi_extensions: Vec<PathBuf>,
+    frames: Entity<ViewFrames>,
     _load_task: Task<()>,
 }
 
@@ -115,6 +154,9 @@ impl PluginRegistry {
             commands: Vec::new(),
             active_commands: HashSet::new(),
             statuses: Vec::new(),
+            tool_views: Vec::new(),
+            pi_extensions: Vec::new(),
+            frames: cx.new(|_| ViewFrames::default()),
             _load_task: load_task,
         }
     }
@@ -155,6 +197,8 @@ impl PluginRegistry {
                 }
             }
             self.commands.extend(parsed.commands);
+            self.tool_views.extend(parsed.tool_views);
+            self.pi_extensions.extend(parsed.pi_extensions);
             self.plugins.push(Plugin {
                 id: parsed.id,
                 name: parsed.name,
@@ -202,6 +246,116 @@ impl PluginRegistry {
 
     pub fn has_busy_status(&self) -> bool {
         self.statuses.iter().any(|status| status.busy)
+    }
+
+    pub fn tool_view(&self, tool: &str) -> Option<&ToolView> {
+        self.tool_views.iter().find(|view| view.tool == tool)
+    }
+
+    pub fn pi_extensions(&self) -> &[PathBuf] {
+        &self.pi_extensions
+    }
+
+    pub fn frames(&self) -> &Entity<ViewFrames> {
+        &self.frames
+    }
+
+    /// A new call of a tool with a view: the plugin's stream moves to it.
+    pub fn open_view(
+        &mut self,
+        tool: &str,
+        call_id: &str,
+        args: &Value,
+        context: CommandContext,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(view) = self.tool_view(tool).cloned() else {
+            return;
+        };
+        let call_id = SharedString::from(call_id.to_string());
+        self.frames.update(cx, |frames, cx| {
+            frames.live.insert(view.plugin_id.clone(), call_id.clone());
+            cx.notify();
+        });
+        let message = json!({
+            "method": "view.open",
+            "params": {
+                "tool": view.tool,
+                "callId": call_id,
+                "args": args,
+                "workspace": context.workspace,
+                "session": context.session,
+            },
+        });
+        self.send(&view.plugin_id, message, cx);
+    }
+
+    /// Keyboard input for a live view; ignored for calls that no longer stream.
+    pub fn send_view_input(&mut self, call_id: &str, params: Value, cx: &mut Context<Self>) {
+        let Some(plugin_id) = self
+            .frames
+            .read(cx)
+            .live
+            .iter()
+            .find(|(_, live)| live.as_ref() == call_id)
+            .map(|(plugin_id, _)| plugin_id.clone())
+        else {
+            return;
+        };
+        let mut params = params;
+        params["callId"] = json!(call_id);
+        let method = if params.get("focused").is_some() {
+            "view.focus"
+        } else {
+            "view.key"
+        };
+        self.send(
+            &plugin_id,
+            json!({ "method": method, "params": params }),
+            cx,
+        );
+    }
+
+    fn apply_frame(&mut self, plugin_id: &SharedString, params: &Value, cx: &mut Context<Self>) {
+        use base64::Engine as _;
+        let Some(call_id) = params["callId"].as_str() else {
+            return;
+        };
+        // Only the call the plugin streams to; late frames for an older one are dropped.
+        if self
+            .frames
+            .read(cx)
+            .live
+            .get(plugin_id)
+            .map(|live| live.as_ref())
+            != Some(call_id)
+        {
+            return;
+        }
+        let Some(bytes) = params["data"]
+            .as_str()
+            .and_then(|data| base64::engine::general_purpose::STANDARD.decode(data).ok())
+        else {
+            return;
+        };
+        let Ok(decoded) = image::load_from_memory(&bytes) else {
+            return;
+        };
+        let mut pixels = decoded.into_rgba8();
+        // GPUI textures are BGRA.
+        for pixel in pixels.chunks_exact_mut(4) {
+            pixel.swap(0, 2);
+        }
+        let frame = Arc::new(gpui::RenderImage::new(vec![image::Frame::new(pixels)]));
+        let call_id = SharedString::from(call_id.to_string());
+        let previous = self.frames.update(cx, |frames, cx| {
+            cx.notify();
+            frames.frames.insert(call_id, frame)
+        });
+        // Free the replaced frame's texture; a stream would fill the atlas otherwise.
+        if let Some(previous) = previous {
+            cx.drop_image(previous, None);
+        }
     }
 
     pub fn run_command(&mut self, command: &str, context: CommandContext, cx: &mut Context<Self>) {
@@ -405,6 +559,7 @@ impl PluginRegistry {
                 message: params["message"].as_str().unwrap_or_default().to_string(),
                 color: tone_color(params["tone"].as_str()),
             }),
+            "view.frame" => self.apply_frame(plugin_id, params, cx),
             "log" => eprintln!(
                 "pi-gpui: plugin {plugin_id}: {}",
                 params["message"].as_str().unwrap_or_default()
@@ -423,6 +578,10 @@ impl PluginRegistry {
     ) {
         // Whatever the plugin showed belongs to the process that just ended.
         self.statuses.retain(|item| item.plugin_id != *plugin_id);
+        self.frames.update(cx, |frames, cx| {
+            frames.live.remove(plugin_id);
+            cx.notify();
+        });
         let owned: Vec<SharedString> = self
             .commands
             .iter()
@@ -530,6 +689,8 @@ struct ParsedManifest {
     name: SharedString,
     run: Vec<String>,
     commands: Vec<PluginCommand>,
+    tool_views: Vec<ToolView>,
+    pi_extensions: Vec<PathBuf>,
 }
 
 fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
@@ -600,11 +761,45 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         });
     }
 
+    let mut tool_views = Vec::new();
+    for view in manifest["contributes"]["toolViews"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let Some(tool) = view["tool"].as_str().filter(|tool| !tool.is_empty()) else {
+            return Err("toolViews: each view needs a \"tool\"".to_string());
+        };
+        let width = view["width"].as_f64().unwrap_or(640.).max(1.);
+        let height = view["height"].as_f64().unwrap_or(400.).max(1.);
+        tool_views.push(ToolView {
+            plugin_id: id.clone(),
+            tool: SharedString::from(tool.to_string()),
+            title: SharedString::from(view["title"].as_str().unwrap_or(tool).to_string()),
+            aspect: (height / width) as f32,
+        });
+    }
+    let mut pi_extensions = Vec::new();
+    for extension in manifest["contributes"]["piExtensions"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        let path = directory.join(extension);
+        if !path.is_file() {
+            return Err(format!("piExtensions: no such file {extension}"));
+        }
+        pi_extensions.push(path);
+    }
+
     Ok(ParsedManifest {
         name: SharedString::from(manifest["name"].as_str().unwrap_or(&id).to_string()),
         id,
         run,
         commands,
+        tool_views,
+        pi_extensions,
     })
 }
 

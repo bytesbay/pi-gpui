@@ -3578,6 +3578,7 @@ dependencies = [
  "block",
  "futures",
  "gpui",
+ "image",
  "objc",
  "pulldown-cmark",
  "raw-window-handle",
