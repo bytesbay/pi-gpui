@@ -22,7 +22,7 @@ fetch("https://api.github.com/repos/bytesbay/pi-gpui/releases/latest")
 // "A native Mac app for ___": types and erases a few endings.
 const rotor = document.querySelector("[data-rotor]");
 if (rotor && !reduceMotion) {
-  const words = ["pi", "your agent", "pi sessions", "Horse Tinder", "pi"];
+  const words = ["pi", "your agent", "pi sessions", "pi"];
   let word = 0;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   (async function loop() {

@@ -88,7 +88,6 @@ code { font-size: 0.88em; color: var(--ink-strong); background: var(--panel); pa
   z-index: -1;
 }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink-strong); font-weight: 600; letter-spacing: -0.01em; }
-.brand img { border-radius: 7px; }
 .nav nav { display: flex; gap: 22px; margin-left: auto; }
 .nav nav a { text-decoration: none; color: var(--muted); font-size: 14px; transition: color 0.2s; }
 .nav nav a:hover { color: var(--ink-strong); }
