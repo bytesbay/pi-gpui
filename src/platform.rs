@@ -236,7 +236,11 @@ pub async fn pick_folders(prompt: &str) -> Result<Option<Vec<std::path::PathBuf>
             let mut paths = Vec::new();
             if response == MODAL_RESPONSE_OK {
                 let urls: *mut Object = msg_send![panel, URLs];
-                let count: usize = if urls.is_null() { 0 } else { msg_send![urls, count] };
+                let count: usize = if urls.is_null() {
+                    0
+                } else {
+                    msg_send![urls, count]
+                };
                 for index in 0..count {
                     let url: *mut Object = msg_send![urls, objectAtIndex: index];
                     let path: *mut Object = msg_send![url, path];

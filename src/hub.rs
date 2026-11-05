@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 use gpui::{
     AnyElement, AnyView, App, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
-    PathPromptOptions, Pixels, Point, SharedString, StyleRefinement, Subscription, Task, Window,
-    WindowControlArea, actions, anchored, deferred, div, px,
+    Pixels, Point, SharedString, StyleRefinement, Subscription, Task, Window, WindowControlArea,
+    actions, anchored, deferred, div, px,
 };
 use serde_json::{Value, json};
 
@@ -138,6 +138,39 @@ struct SettingsPage {
 struct OpenChat {
     view: Entity<ChatView>,
     _subscription: Subscription,
+}
+
+/// A project being dragged in the sidebar to reorder it; also its drag preview.
+#[derive(Clone)]
+struct DraggedWorkspace {
+    path: PathBuf,
+    name: SharedString,
+    index: usize,
+}
+
+impl Render for DraggedWorkspace {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors.clone();
+        h_flex()
+            .gap(px(6.))
+            .h(px(26.))
+            .px(px(8.))
+            .rounded(px(5.))
+            .bg(colors.elevated_surface_background)
+            .border_1()
+            .border_color(colors.border)
+            .shadow_md()
+            .child(
+                Icon::new(IconName::Folder)
+                    .size(IconSize::Small)
+                    .color(Color::Muted),
+            )
+            .child(
+                Label::new(self.name.clone())
+                    .size(LabelSize::Small)
+                    .weight(FontWeight::MEDIUM),
+            )
+    }
 }
 
 struct WorkspaceEntry {
@@ -505,7 +538,7 @@ impl HubView {
         let picker = platform::pick_folders("Add");
         #[cfg(not(target_os = "macos"))]
         let picker = {
-            let paths = cx.prompt_for_paths(PathPromptOptions {
+            let paths = cx.prompt_for_paths(gpui::PathPromptOptions {
                 files: false,
                 directories: true,
                 multiple: true,
@@ -569,6 +602,26 @@ impl HubView {
         {
             self.active_chat = None;
         }
+        self.save(cx);
+        cx.notify();
+    }
+
+    /// Moves a project to `target`'s place in the sidebar, like Zed does for
+    /// dragged worktrees.
+    fn move_workspace(&mut self, workspace: &Path, target: usize, cx: &mut Context<Self>) {
+        let Some(from) = self
+            .workspaces
+            .iter()
+            .position(|entry| entry.path == workspace)
+        else {
+            return;
+        };
+        let target = target.min(self.workspaces.len() - 1);
+        if from == target {
+            return;
+        }
+        let entry = self.workspaces.remove(from);
+        self.workspaces.insert(target, entry);
         self.save(cx);
         cx.notify();
     }
@@ -834,6 +887,10 @@ impl HubView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path = entry.path.clone();
+        // Keyed by path, not position, so hover and tooltip state follow a
+        // project when it is dragged to another place.
+        let workspace_id =
+            |kind: &str| ElementId::Name(format!("{kind}:{}", entry.path.display()).into());
         let running = entry.has_running_chat(cx);
         let status: Option<AnyElement> = if entry.refreshing {
             Some(Spinner::new().size(IconSize::XSmall).into_any_element())
@@ -876,7 +933,7 @@ impl HubView {
                     })),
             );
 
-        let header = ListItem::new(("workspace", index))
+        let header = ListItem::new(workspace_id("workspace"))
             .start_slot(
                 h_flex()
                     .gap(px(4.))
@@ -980,8 +1037,31 @@ impl HubView {
             }
         }
 
+        let dragged = DraggedWorkspace {
+            path: path.clone(),
+            name: entry.name.clone(),
+            index,
+        };
+        let header = div()
+            .id(workspace_id("workspace-drag"))
+            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .child(header);
+
+        let drop_target = cx.theme().colors.text_accent.opacity(0.12);
         v_flex()
+            .id(workspace_id("workspace-block"))
             .mb(px(2.))
+            .rounded(px(5.))
+            .drag_over::<DraggedWorkspace>(move |style, dragged, _, _| {
+                if dragged.index == index {
+                    style
+                } else {
+                    style.bg(drop_target)
+                }
+            })
+            .on_drop(cx.listener(move |this, dragged: &DraggedWorkspace, _, cx| {
+                this.move_workspace(&dragged.path, index, cx);
+            }))
             .child(header)
             .children(rows)
             .into_any_element()
@@ -1154,6 +1234,27 @@ impl HubView {
                 cx.notify();
             }
         }));
+        let hide_button = row.file.clone().map(|file| {
+            let hidden = self.hidden_sessions.contains(&file);
+            IconButton::new(
+                ElementId::Name(format!("session-hide:{}", row.id).into()),
+                if hidden {
+                    IconName::Eye
+                } else {
+                    IconName::EyeOff
+                },
+            )
+            .size(ButtonSize::Compact)
+            .icon_size(IconSize::XSmall)
+            .tooltip(Tooltip::text(if hidden { "Show" } else { "Hide" }))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.toggle_hidden(file.clone(), cx);
+            }))
+        });
+        let hover_buttons = h_flex()
+            .gap(px(2.))
+            .children(hide_button)
+            .child(menu_button);
 
         let item = ListItem::new(row.id.clone())
             .indent_level(1)
@@ -1173,7 +1274,7 @@ impl HubView {
                             .color(Color::Placeholder),
                     )
                 })
-                .end_hover_slot(menu_button)
+                .end_hover_slot(hover_buttons)
                 .into_any_element(),
         }
     }
