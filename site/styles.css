@@ -299,9 +299,19 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
 .frame-window { border: 0; border-radius: 1.25% / 1.98%; background: var(--bg); }
 
 /* Can it run DOOM? */
-.doom { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
+/* Text and recording side by side in one card. */
+.doom-card {
+  display: grid;
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  gap: 48px;
+  align-items: center;
+  padding: 40px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(31, 33, 39, 0.55), rgba(13, 16, 22, 0.55));
+}
+.doom-card h2 { margin-bottom: 20px; }
 .doom-copy p { color: var(--muted); font-size: 17px; }
-.doom h2 { margin-bottom: 24px; }
 .doom-copy .hint { margin-top: 24px; }
 .doom-shot { margin: 0; position: relative; }
 .doom-shot::before {
@@ -367,7 +377,7 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   .nav .btn-small { margin-left: auto; }
   .grid { grid-template-columns: 1fr 1fr; }
   .how { grid-template-columns: 1fr; }
-  .doom { grid-template-columns: 1fr; }
+  .doom-card { grid-template-columns: 1fr; padding: 24px; }
     .strip { grid-template-columns: 1fr 1fr; }
   .strip div:nth-child(3) { border-left: 0; }
   .strip div:nth-child(n + 3) { border-top: 1px solid var(--line); }
