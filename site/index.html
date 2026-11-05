@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Pi GPUI: a native macOS app for the pi coding agent</title>
+<meta name="description" content="Pi GPUI is a fast native Mac interface for the pi coding agent. A pi GUI written in Rust with GPUI and Metal that runs your installed pi, with sessions, forks, a session tree and slash commands. A desktop alternative to the Claude Code app.">
+<meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, claude code app alternative, claude code desktop alternative, ai coding agent gui">
+<link rel="canonical" href="https://pi-gpui.dev/">
+<meta name="theme-color" content="#0b0e14">
+<meta name="color-scheme" content="dark">
+
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Pi GPUI">
+<meta property="og:url" content="https://pi-gpui.dev/">
+<meta property="og:title" content="Pi GPUI: a native macOS app for the pi coding agent">
+<meta property="og:description" content="A fast native Mac interface for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
+<meta property="og:image" content="https://pi-gpui.dev/img/og.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Pi GPUI: a native macOS app for the pi coding agent">
+<meta name="twitter:description" content="A fast native Mac interface for pi, written in Rust with GPUI.">
+<meta name="twitter:image" content="https://pi-gpui.dev/img/og.jpg">
+
+<link rel="icon" href="/img/icon.svg" type="image/svg+xml">
+<link rel="icon" href="/img/favicon-64.png" type="image/png" sizes="64x64">
+<link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
+<link rel="preload" href="/fonts/JetBrainsMonoNL-Regular.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/styles.css">
+
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "Pi GPUI",
+  "alternateName": ["pi gui", "pi interface", "pi desktop app"],
+  "description": "A fast native macOS app for the pi coding agent, written in Rust with GPUI and Metal.",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS (Apple silicon)",
+  "url": "https://pi-gpui.dev/",
+  "downloadUrl": "https://github.com/bytesbay/pi-gpui/releases/latest",
+  "image": "https://pi-gpui.dev/img/og.jpg",
+  "screenshot": "https://pi-gpui.dev/img/shot-dialog.jpg",
+  "softwareRequirements": "pi 1.4 or newer",
+  "programmingLanguage": "Rust",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "codeRepository": "https://github.com/bytesbay/pi-gpui"
+}
+</script>
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "FAQPage",
+  "mainEntity": [
+    { "@type": "Question", "name": "What is Pi GPUI?",
+      "acceptedAnswer": { "@type": "Answer", "text": "A native macOS interface for the pi coding agent. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in a window drawn by GPUI on the GPU." } },
+    { "@type": "Question", "name": "Is Pi GPUI an alternative to the Claude Code app?",
+      "acceptedAnswer": { "@type": "Answer", "text": "If you want a desktop app for an agentic coding workflow, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other model providers. You keep pi's models, extensions and skills, and get a native Mac window around them." } },
+    { "@type": "Question", "name": "Is it written in Rust?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The app is Rust on GPUI, the UI framework behind the Zed editor, and renders with Metal. pi itself stays the agent engine; the app talks to it over JSON lines." } },
+    { "@type": "Question", "name": "Do I need pi installed?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, pi 1.4 or newer within pi 1.x. The app finds pi in PI_EXECUTABLE, PATH or your login shell, so nvm installs work. It never installs or updates pi on its own." } },
+    { "@type": "Question", "name": "Which Macs does it run on?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Macs with Apple silicon. The app updates itself from GitHub releases." } },
+    { "@type": "Question", "name": "Is it free?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The download is free and the source is on GitHub." } }
+  ]
+}
+</script>
+</head>
+<body>
+<canvas id="field" aria-hidden="true"></canvas>
+
+<header class="nav">
+  <a class="brand" href="/" aria-label="Pi GPUI home">
+    <img src="/img/favicon-64.png" alt="" width="28" height="28">
+    <span>Pi GPUI</span>
+  </a>
+  <nav>
+    <a href="#features">Features</a>
+    <a href="#how">How it works</a>
+    <a href="#tour">Tour</a>
+    <a href="#faq">FAQ</a>
+    <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+  </nav>
+  <a class="btn btn-small" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">Download</a>
+</header>
+
+<main>
+  <section class="hero">
+    <a class="pill" href="https://github.com/bytesbay/pi-gpui/releases/latest" data-release-link>
+      <span class="dot"></span><span data-version>Latest release</span><span class="pill-sep">·</span>macOS, Apple silicon
+    </a>
+    <h1>A native Mac app<br>for <span class="rotor" aria-live="polite"><span data-rotor>pi</span><span class="caret"></span></span></h1>
+    <p class="lead">Pi GPUI is an interface for the pi coding agent. It runs the pi you already have, with your models, extensions, skills and sessions, in a window written in Rust and drawn on the GPU.</p>
+    <div class="cta">
+      <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 12.5V14h12v-1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        Download for macOS
+      </a>
+      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">View source</a>
+    </div>
+    <p class="hint mono">Needs <a href="https://github.com/earendil-works/pi" rel="noopener">pi</a> 1.4+ · free · updates itself</p>
+  </section>
+
+  <section class="demo reveal" aria-label="Pi GPUI in use">
+    <div class="frame">
+      <video src="/demo.mp4" poster="/img/demo-poster.webp" width="1360" height="860" autoplay muted loop playsinline preload="metadata" aria-label="pi asks which vibe the Horse Tinder chat should have, gets an answer from the card in the chat, then builds the feature"></video>
+    </div>
+    <p class="caption mono">Real session, sped up: building Horse Tinder, the Tinder for horses. pi asks a question right in the chat, then gets to work.</p>
+  </section>
+
+  <section class="strip" aria-label="Built with">
+    <div><span class="mono label">Language</span><strong>Rust</strong></div>
+    <div><span class="mono label">UI</span><strong>GPUI</strong></div>
+    <div><span class="mono label">Rendering</span><strong>Metal</strong></div>
+    <div><span class="mono label">Agent</span><strong>pi over RPC</strong></div>
+  </section>
+
+  <section id="features" class="section">
+    <p class="mono eyebrow">Features</p>
+    <h2>Everything pi does, in a window you can see at a glance.</h2>
+    <div class="grid">
+      <article class="card">
+        <span class="mono tag">⌘1 … ⌘9</span>
+        <h3>Sessions side by side</h3>
+        <p>Projects and their sessions sit in a sidebar. Every open session runs its own pi, so switching never stops work.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">⌘⇧T</span>
+        <h3>Session tree</h3>
+        <p>Walk the branches of a session with the keyboard, jump back to any message and summarize the branch you leave.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">/fork</span>
+        <h3>Fork from any message</h3>
+        <p>Try another direction from any point. The original session stays as it was.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">/</span>
+        <h3>Slash commands</h3>
+        <p>Extension commands, prompt templates and skills from pi, plus /compact, /model, /name, /copy, /export and more.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">drop · paste</span>
+        <h3>Files and images</h3>
+        <p>Paste or drop files into the message field. They become chips and are sent as paths, the same way pi does it in the terminal.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">◔ 42%</span>
+        <h3>Context at a glance</h3>
+        <p>A ring next to the model shows context used, when pi compacts, cache hits and plan limits.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">Y / N</span>
+        <h3>Questions in the chat</h3>
+        <p>When an extension asks something, the question shows up in the transcript. Pick with a click, a digit or the arrows.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">⌘⇧M</span>
+        <h3>Model per session</h3>
+        <p>Switch model and thinking level for one session without touching pi's defaults.</p>
+      </article>
+      <article class="card">
+        <span class="mono tag">auto</span>
+        <h3>Updates that wait for you</h3>
+        <p>The app updates itself. Updates for pi and its extensions show next to the version and run only when you click.</p>
+      </article>
+    </div>
+  </section>
+
+  <section id="how" class="section how">
+    <div>
+      <p class="mono eyebrow">How it works</p>
+      <h2>The agent stays in pi. The app is the window.</h2>
+      <p>Pi GPUI starts <code>pi --mode rpc</code> as a child process for each session and talks to it in JSON lines. There is no SDK wrapper, no second agent loop and no copy of pi inside the app. Whatever works in your terminal works here: models, providers, extensions, skills, prompt templates.</p>
+      <p>The interface is GPUI, the framework behind the Zed editor. Text, code and the transcript are drawn with Metal, so long sessions scroll without stutter.</p>
+    </div>
+    <pre class="diagram mono" aria-label="Architecture"><span class="c-accent">Pi GPUI</span>  <span class="muted">Rust · GPUI · Metal</span>
+   │
+   │  <span class="c-info">JSONL</span> over stdin / stdout
+   ▼
+<span class="c-accent">pi --mode rpc</span>  <span class="muted">your install</span>
+   │
+   ▼
+models · tools · extensions · your files</pre>
+  </section>
+
+  <section id="tour" class="section tour reveal">
+    <p class="mono eyebrow">A day at Horse Tinder</p>
+    <h2>What it looks like while pi works.</h2>
+    <div class="tabs mono" role="tablist" data-tabs>
+      <button role="tab" aria-selected="true" data-tab="0">Fix a bug</button>
+      <button role="tab" aria-selected="false" data-tab="1">Answer a question</button>
+      <button role="tab" aria-selected="false" data-tab="2">Ship a feature</button>
+      <button role="tab" aria-selected="false" data-tab="3">Hooves support</button>
+      <button role="tab" aria-selected="false" data-tab="4">Updates</button>
+      <button role="tab" aria-selected="false" data-tab="5">Investor pitch</button>
+    </div>
+    <div class="frame gallery" data-gallery>
+      <figure class="active"><img src="/img/shot-fix.webp" width="1600" height="1012" alt="pi finds that isMatch used || instead of &amp;&amp;, fixes it and reruns the tests" loading="lazy"><figcaption>One-sided likes were counting as matches. pi reads the tests, fixes <code>isMatch</code> and runs them again.</figcaption></figure>
+      <figure><img src="/img/shot-dialog.webp" width="1600" height="1012" alt="A question card in the transcript with three options and keyboard hints" loading="lazy"><figcaption>Extensions can ask you things. The question sits in the chat: click, press a digit, or type your own answer.</figcaption></figure>
+      <figure><img src="/img/shot-after.webp" width="1600" height="1012" alt="pi summarizes the new chat feature: canned flirty replies, files changed, tests passing" loading="lazy"><figcaption>"You had me at neigh." Playful and flirty it is, with tests.</figcaption></figure>
+      <figure><img src="/img/shot-swipe.webp" width="1600" height="1012" alt="pi adds big buttons and arrow keys because horses cannot swipe" loading="lazy"><figcaption>Horses can't swipe, they have hooves. Big buttons and arrow keys fix that.</figcaption></figure>
+      <figure><img src="/img/shot-updates.webp" width="1600" height="1012" alt="Extension updates popover listing pi-subagents and pi-web-access with Update buttons" loading="lazy"><figcaption>New pi and extension versions show up next to the pi version. Nothing updates until you click.</figcaption></figure>
+      <figure><img src="/img/shot-pitch.webp" width="1600" height="1012" alt="An honest investor pitch with a metrics table: 5 horses, 2 matches" loading="lazy"><figcaption>Markdown answers with tables and code, all selectable. The Series A is going great.</figcaption></figure>
+    </div>
+  </section>
+
+  <section id="keys" class="section">
+    <p class="mono eyebrow">Keyboard</p>
+    <h2>Made for the keyboard.</h2>
+    <dl class="keys mono">
+      <div><dt>⌘N</dt><dd>New session</dd></div>
+      <div><dt>⌘O</dt><dd>Add project</dd></div>
+      <div><dt>⌘1 … ⌘9</dt><dd>Open a session</dd></div>
+      <div><dt>⌘⇧T</dt><dd>Session tree</dd></div>
+      <div><dt>⌘⇧M</dt><dd>Model and thinking</dd></div>
+      <div><dt>⌘⇧E</dt><dd>Expand step details</dd></div>
+      <div><dt>↩ / ⇧↩</dt><dd>Send / new line</dd></div>
+      <div><dt>Esc</dt><dd>Stop the run</dd></div>
+      <div><dt>/</dt><dd>Command menu</dd></div>
+      <div><dt>⌘,</dt><dd>Settings</dd></div>
+    </dl>
+  </section>
+
+  <section id="faq" class="section faq">
+    <p class="mono eyebrow">FAQ</p>
+    <h2>Questions</h2>
+    <details open>
+      <summary>What is Pi GPUI?</summary>
+      <p>A native macOS interface for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in one window.</p>
+    </details>
+    <details>
+      <summary>Is it an alternative to the Claude Code app?</summary>
+      <p>If you want a desktop app for agentic coding, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other providers. You keep pi's models, extensions and skills and get a native Mac window around them.</p>
+    </details>
+    <details>
+      <summary>Is it written in Rust?</summary>
+      <p>Yes. Rust on GPUI, rendered with Metal. pi stays the agent engine, the app talks to it over JSON lines.</p>
+    </details>
+    <details>
+      <summary>Do I need pi installed?</summary>
+      <p>Yes, pi 1.4 or newer within 1.x. The app finds it in <code>PI_EXECUTABLE</code>, <code>PATH</code> or your login shell, so nvm installs work. It never installs or updates pi on its own.</p>
+    </details>
+    <details>
+      <summary>Which Macs does it run on?</summary>
+      <p>Macs with Apple silicon. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
+    </details>
+    <details>
+      <summary>Is it free?</summary>
+      <p>Yes. Free to download, source on <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>.</p>
+    </details>
+  </section>
+
+  <section class="section final">
+    <h2>Give pi a window.</h2>
+    <div class="cta">
+      <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">Download for macOS</a>
+      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+    </div>
+  </section>
+</main>
+
+<footer class="footer mono">
+  <span>Pi GPUI</span>
+  <span class="muted">Not affiliated with Anthropic. pi is made by its own authors.</span>
+  <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+</footer>
+
+<script src="/main.js" defer></script>
+</body>
+</html>
