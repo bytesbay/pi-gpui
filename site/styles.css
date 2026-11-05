@@ -186,7 +186,7 @@ h1 {
   background: var(--bg-2);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
 }
-.frame video { width: 100%; aspect-ratio: 1360 / 860; }
+.frame video { width: 100%; aspect-ratio: 1920 / 1214; }
 .caption { text-align: center; color: var(--dim); font-size: 12px; margin: 16px auto 0; max-width: 680px; }
 
 /* Built-with strip */
@@ -294,6 +294,30 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
 .c-accent { color: var(--accent); }
 .c-info { color: var(--info); }
 
+/* The hero recording has the window's own border and rounded corners;
+   the radius matches macOS window corners (about 17pt of 1360). */
+.frame-window { border: 0; border-radius: 1.25% / 1.98%; background: var(--bg); }
+
+/* Can it run DOOM? */
+.doom { display: grid; grid-template-columns: 1fr 1.05fr; gap: 56px; align-items: center; }
+.doom-copy p { color: var(--muted); font-size: 17px; }
+.doom h2 { margin-bottom: 24px; }
+.ext-list { list-style: none; padding: 0; margin: 26px 0; display: grid; gap: 14px; }
+.ext-list li { display: grid; grid-template-columns: 118px 1fr; gap: 14px; align-items: baseline; color: var(--muted); font-size: 15px; }
+.ext-list .tag { justify-self: start; }
+.manifest { margin: 0 0 18px; padding: 18px 20px; border: 1px solid var(--line); border-radius: 12px; background: var(--bg-2); font-size: 13px; line-height: 1.7; overflow-x: auto; color: var(--ink); }
+.doom-shot { margin: 0; position: relative; }
+.doom-shot::before {
+  content: "";
+  position: absolute;
+  inset: 10% 5%;
+  background: radial-gradient(ellipse at center, rgba(239, 113, 119, 0.18), rgba(230, 180, 80, 0.08) 50%, transparent 72%);
+  filter: blur(40px);
+  z-index: -1;
+  animation: breathe 7s ease-in-out infinite;
+}
+.doom-shot video { width: 100%; aspect-ratio: 1104 / 872; }
+
 /* Keys */
 .keys { display: grid; grid-template-columns: repeat(2, 1fr); gap: 0 48px; margin: 0; }
 .keys div { display: flex; justify-content: space-between; gap: 16px; padding: 14px 0; border-bottom: 1px solid var(--line); }
@@ -346,6 +370,8 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   .nav .btn-small { margin-left: auto; }
   .grid { grid-template-columns: 1fr 1fr; }
   .how { grid-template-columns: 1fr; }
+  .doom { grid-template-columns: 1fr; }
+  .ext-list li { grid-template-columns: 1fr; gap: 6px; }
   .strip { grid-template-columns: 1fr 1fr; }
   .strip div:nth-child(3) { border-left: 0; }
   .strip div:nth-child(n + 3) { border-top: 1px solid var(--line); }
