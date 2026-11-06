@@ -122,6 +122,17 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 
 `readline` is fine for protocol 1: the app never writes the U+2028/U+2029 characters inside lines.
 
+## Performance
+
+A plugin runs next to the user's work all day, so it should cost nothing while idle.
+
+- Wait on events, never poll: stdin lines, file watches (`fs.watch`, FSEvents), sockets. A short timer is acceptable only as a fallback when an event can be missed.
+- Start fast and do heavy setup lazily, on the first command or view that needs it.
+- Send only what changed: one `status.set` per state change, not per tick. Frames only while a view is live and focused, at the rate the content changes.
+- Keep messages small. Encode frames at the size the view shows (JPEG for video, PNG for flat UI).
+- Cache what you read and invalidate it on change events, not on every call.
+- Exit when stdin closes and release everything you opened.
+
 ## Permissions
 
 macOS asks for permissions on behalf of the app that started the process. While Pi GPUI runs from a terminal, the permission prompt names the terminal; for a bundled `.app` it names the app.

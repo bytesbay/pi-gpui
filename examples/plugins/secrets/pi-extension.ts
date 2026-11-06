@@ -15,14 +15,15 @@
  */
 import { Type } from "@earendil-works/pi-ai";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
-import { existsSync, readdirSync, readFileSync, statSync, unlinkSync } from "node:fs";
+import { type FSWatcher, existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, watch } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 const SECRETS_DIR = join(homedir(), ".pi", "agent", "secrets");
 const ANSWERS_DIR = join(SECRETS_DIR, ".answers");
 const NAME_RE = /^[A-Za-z0-9_.-]{1,100}$/;
-const POLL_MS = 150;
+/** Safety net in case a file event is missed; events do the real work. */
+const FALLBACK_POLL_MS = 2000;
 const WAIT_LIMIT_MS = 30 * 60 * 1000;
 const MASK = "***";
 const MIN_REDACT_LENGTH = 6;
@@ -31,23 +32,57 @@ const answerPath = (callId: string) => join(ANSWERS_DIR, `${callId.replace(/[^A-
 
 type Answer = { status: "saved" | "kept" | "cancelled"; length?: number };
 
-/** Waits for the plugin to leave the outcome of this call. */
-async function waitForAnswer(callId: string, signal?: AbortSignal): Promise<Answer | null> {
-	const path = answerPath(callId);
-	const deadline = Date.now() + WAIT_LIMIT_MS;
-	while (Date.now() < deadline && !signal?.aborted) {
-		if (existsSync(path)) {
-			try {
-				const answer = JSON.parse(readFileSync(path, "utf8")) as Answer;
-				unlinkSync(path);
-				return answer;
-			} catch {
-				// Not complete yet; try again.
-			}
-		}
-		await new Promise((resolve) => setTimeout(resolve, POLL_MS));
+function readAnswer(path: string): Answer | null {
+	try {
+		const answer = JSON.parse(readFileSync(path, "utf8")) as Answer;
+		unlinkSync(path);
+		return answer;
+	} catch {
+		return null; // Not there yet.
 	}
-	return null;
+}
+
+/**
+ * Waits for the plugin to leave the outcome of this call. Sleeps on a file
+ * watch instead of polling, so a waiting tool costs nothing.
+ */
+function waitForAnswer(callId: string, signal?: AbortSignal): Promise<Answer | null> {
+	mkdirSync(ANSWERS_DIR, { recursive: true, mode: 0o700 });
+	const path = answerPath(callId);
+	const file = path.slice(ANSWERS_DIR.length + 1);
+	return new Promise((resolve) => {
+		let watcher: FSWatcher | undefined;
+		const finish = (answer: Answer | null) => {
+			watcher?.close();
+			clearInterval(poll);
+			clearTimeout(limit);
+			signal?.removeEventListener("abort", abort);
+			resolve(answer);
+		};
+		const check = () => {
+			const answer = readAnswer(path);
+			if (answer) {
+				finish(answer);
+			}
+		};
+		const abort = () => finish(null);
+		const poll = setInterval(check, FALLBACK_POLL_MS);
+		const limit = setTimeout(abort, WAIT_LIMIT_MS);
+		if (signal?.aborted) {
+			return abort();
+		}
+		signal?.addEventListener("abort", abort, { once: true });
+		try {
+			watcher = watch(ANSWERS_DIR, (_event, name) => {
+				if (!name || name === file) {
+					check();
+				}
+			});
+		} catch {
+			// No file events here; the poll still answers.
+		}
+		check();
+	});
 }
 
 function usageHint(name: string, path: string): string {
@@ -60,12 +95,37 @@ function usageHint(name: string, path: string): string {
 }
 
 let cache: { key: string; values: string[] } | null = null;
+/** While the folder is watched, a cached list stays valid until a file event. */
+let cacheWatcher: FSWatcher | undefined;
+
+function watchSecrets(): void {
+	if (cacheWatcher) {
+		return;
+	}
+	try {
+		cacheWatcher = watch(SECRETS_DIR, () => {
+			cache = null;
+		});
+		cacheWatcher.on("error", () => {
+			cacheWatcher?.close();
+			cacheWatcher = undefined;
+			cache = null;
+		});
+		cacheWatcher.unref();
+	} catch {
+		cacheWatcher = undefined;
+	}
+}
 
 function secretValues(): string[] {
+	if (cache && cacheWatcher) {
+		return cache.values;
+	}
 	try {
 		if (!existsSync(SECRETS_DIR)) {
 			return [];
 		}
+		watchSecrets();
 		const files = readdirSync(SECRETS_DIR)
 			.filter((file) => !file.startsWith("."))
 			.map((file) => ({ file, stat: statSync(join(SECRETS_DIR, file)) }))

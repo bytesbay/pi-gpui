@@ -629,19 +629,33 @@ impl PluginRegistry {
         messages: Vec<JsonlMessage>,
         cx: &mut Context<Self>,
     ) {
+        // Frames, logs and events change nothing the registry's observers
+        // show; notifying for them would re-render every chat per frame.
+        let mut changed = false;
         for message in messages {
             match message {
-                JsonlMessage::Record(record) => self.apply_record(plugin_id, &record, cx),
+                JsonlMessage::Record(record) => {
+                    changed |= !matches!(
+                        record["method"].as_str().unwrap_or_default(),
+                        "view.frame" | "log" | "notify" | "composer.insert" | "composer.setText"
+                    );
+                    self.apply_record(plugin_id, &record, cx);
+                }
                 JsonlMessage::Malformed(line) => {
                     eprintln!("pi-gpui: plugin {plugin_id} wrote non-JSON: {line}");
                 }
                 JsonlMessage::Exited {
                     status,
                     stderr_tail,
-                } => self.on_exited(plugin_id, status, stderr_tail, cx),
+                } => {
+                    changed = true;
+                    self.on_exited(plugin_id, status, stderr_tail, cx);
+                }
             }
         }
-        cx.notify();
+        if changed {
+            cx.notify();
+        }
     }
 
     fn apply_record(&mut self, plugin_id: &SharedString, record: &Value, cx: &mut Context<Self>) {
