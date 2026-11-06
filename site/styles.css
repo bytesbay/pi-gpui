@@ -148,6 +148,9 @@ h1 {
   color: var(--ink-strong);
 }
 .rotor { display: inline-flex; white-space: nowrap; align-items: baseline; color: var(--accent); font-family: var(--mono); font-weight: 400; letter-spacing: -0.07em; }
+/* An invisible "p" keeps the line's height and baseline while the word is
+   erased to nothing, so the page below does not jump. */
+.strut { display: inline-block; width: 0; overflow: hidden; visibility: hidden; user-select: none; pointer-events: none; }
 .caret {
   display: inline-block;
   width: 0.08em;
