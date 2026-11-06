@@ -7,6 +7,7 @@
 //! it survives the virtualized list re-creating rows while scrolling.
 
 use std::ops::Range;
+use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 use gpui::{
@@ -41,6 +42,8 @@ pub struct TextSelection {
     dragging: bool,
     /// Receives keyboard focus on selection, so Copy reaches the owning view.
     copy_focus: FocusHandle,
+    /// Relative file links resolve against this folder (the session's project).
+    link_base: Option<PathBuf>,
 }
 
 impl TextSelection {
@@ -52,7 +55,13 @@ impl TextSelection {
             head: 0,
             dragging: false,
             copy_focus,
+            link_base: None,
         }
+    }
+
+    pub fn with_link_base(mut self, base: PathBuf) -> Self {
+        self.link_base = Some(base);
+        self
     }
 
     pub fn selected_text(&self) -> Option<String> {
@@ -524,9 +533,110 @@ impl Element for SelectableText {
             if clicked && !links.is_empty() && hitbox.is_hovered(window) {
                 let offset = layout.offset_for_position(event.position - origin);
                 if let Some((_, url)) = links.iter().find(|(range, _)| range.contains(&offset)) {
-                    cx.open_url(url);
+                    let base = selection.read(cx).link_base.clone();
+                    open_link(url, base.as_deref(), cx);
                 }
             }
         });
+    }
+}
+
+/// Opens a link from an answer. Web and mail links go to the browser. Anything
+/// else is a file: `file://` URLs, absolute paths, `~/...` and paths relative
+/// to the project, optionally with a `#anchor` or a `:line` suffix. macOS
+/// cannot open a bare path as a URL (error -50), so files open with the
+/// system's default app.
+pub fn open_link(link: &str, base: Option<&Path>, cx: &App) {
+    let link = link.trim();
+    let scheme = link.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase());
+    match scheme.as_deref() {
+        Some("http" | "https" | "mailto") => return cx.open_url(link),
+        Some("file") => {}
+        // Other schemes (`vscode:`, `zed:`...) but not Windows-like `C:` or `src/a.rs:12`.
+        Some(scheme)
+            if scheme.len() > 1
+                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+                && !link.contains(' ')
+                && link[scheme.len() + 1..].starts_with("//") =>
+        {
+            return cx.open_url(link);
+        }
+        _ => {}
+    }
+    match resolve_file_link(link, base) {
+        Some(path) => cx.open_with_system(&path),
+        None => eprintln!("pi-gpui: link target not found: {link}"),
+    }
+}
+
+fn resolve_file_link(link: &str, base: Option<&Path>) -> Option<PathBuf> {
+    let raw = link.strip_prefix("file://").unwrap_or(link);
+    let raw = raw.split('#').next().unwrap_or(raw);
+    let decoded = percent_decode(raw);
+    let mut candidates = vec![decoded.clone()];
+    // `src/main.rs:12` or `src/main.rs:12:5`.
+    let mut trimmed = decoded.as_str();
+    for _ in 0..2 {
+        match trimmed.rsplit_once(':') {
+            Some((head, tail)) if !tail.is_empty() && tail.chars().all(|c| c.is_ascii_digit()) => {
+                trimmed = head;
+                candidates.push(trimmed.to_string());
+            }
+            _ => break,
+        }
+    }
+    candidates.into_iter().find_map(|candidate| {
+        let path = if let Some(rest) = candidate.strip_prefix("~/") {
+            crate::sessions::home_directory()?.join(rest)
+        } else if Path::new(&candidate).is_absolute() {
+            PathBuf::from(&candidate)
+        } else {
+            base?.join(&candidate)
+        };
+        path.exists().then_some(path)
+    })
+}
+
+/// `%20` and friends; invalid sequences stay as they are.
+fn percent_decode(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut index = 0;
+    while index < bytes.len() {
+        if bytes[index] == b'%'
+            && let Some(byte) = text
+                .get(index + 1..index + 3)
+                .and_then(|hex| u8::from_str_radix(hex, 16).ok())
+        {
+            out.push(byte);
+            index += 3;
+            continue;
+        }
+        out.push(bytes[index]);
+        index += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| text.to_string())
+}
+
+#[cfg(test)]
+mod link_tests {
+    use super::*;
+
+    #[test]
+    fn file_links_resolve_like_paths() {
+        let root = std::env::temp_dir().join(format!("pi-gpui-links-{}", std::process::id()));
+        std::fs::create_dir_all(root.join("docs")).expect("dir");
+        let file = root.join("docs/my cv.pdf");
+        std::fs::write(&file, b"x").expect("file");
+
+        assert_eq!(resolve_file_link("docs/my cv.pdf", Some(&root)), Some(file.clone()));
+        assert_eq!(resolve_file_link("docs/my%20cv.pdf", Some(&root)), Some(file.clone()));
+        let absolute = format!("file://{}", file.display()).replace(' ', "%20");
+        assert_eq!(resolve_file_link(&absolute, None), Some(file.clone()));
+        assert_eq!(resolve_file_link(&format!("{}:12", file.display()), None), Some(file.clone()));
+        assert_eq!(resolve_file_link("docs/my cv.pdf#page=2", Some(&root)), Some(file));
+        assert_eq!(resolve_file_link("docs/missing.pdf", Some(&root)), None);
+
+        std::fs::remove_dir_all(&root).ok();
     }
 }

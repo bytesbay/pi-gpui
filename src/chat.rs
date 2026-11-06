@@ -435,7 +435,10 @@ impl ChatView {
             }),
         ];
         let focus_handle = cx.focus_handle();
-        let selection = cx.new(|_| TextSelection::new(focus_handle.clone()));
+        // Relative file links in answers point into the project.
+        let link_base = workspace.clone();
+        let selection =
+            cx.new(|_| TextSelection::new(focus_handle.clone()).with_link_base(link_base));
         let selection_subscription = cx.observe(&selection, |_, _, cx| cx.notify());
         let mut this = Self {
             workspace,
@@ -1088,7 +1091,7 @@ impl ChatView {
             "export_html" => {
                 if let Some(path) = data["path"].as_str() {
                     self.push_notice(Tone::Info, format!("Exported to {path}"));
-                    cx.open_url(&format!("file://{path}"));
+                    cx.open_with_system(Path::new(path));
                 }
             }
             _ => {}
@@ -3271,7 +3274,7 @@ fn thumbnails(row: usize, images: &[Picture], colors: &crate::ui::ThemeColors) -
                 .overflow_hidden()
                 .when_some(path, |this, path| {
                     this.cursor_pointer().on_click(move |_, _, cx| {
-                        cx.open_url(&format!("file://{}", path.display()))
+                        cx.open_with_system(&path)
                     })
                 })
                 .child(
