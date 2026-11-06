@@ -54,6 +54,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
   - `icon`: `microphone`, `terminal`, `file`, `sparkle`, `message`, `tool`, `folder`, `refresh`, `check`, `info`, `warning`.
   - `keybinding`: a GPUI keystroke (`cmd-shift-d`).
 - `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
+- `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
 
 ### Live views
@@ -61,6 +62,14 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 When pi calls a tool that has a view, the app sends `view.open` and shows the plugin's frames in that tool call. A plugin streams to one call at a time: a newer call of the same tool takes the stream over, and older rows keep their last frame. Frames for other calls are dropped. Clicking a view gives it the keyboard (`view.focus`), keys arrive as `view.key`, and Esc or a click elsewhere gives the keyboard back. Release held keys when focus goes away.
 
 The [DOOM plugin](../examples/plugins/doom) is a complete example: a pi tool `doom`, and a game that runs only while the view has the keyboard.
+
+### Prompts
+
+A plugin can ask the user for text in a field inside a tool call: `prompt.input` with the call's `callId`. The field takes the keyboard; Enter or the submit button answers, Esc or Cancel cancels, and the answer comes back as `prompt.result`. With `secret: true` the text shows as dots, cannot be copied, and has an eye button to reveal it. The answer goes only to the plugin, never to pi or the transcript.
+
+A prompt closes when it is answered, when the plugin sends `prompt.close`, when the plugin exits, or when its tool call ends (then `prompt.result` comes with `cancelled` and `closed`, and nobody waits for an answer).
+
+The [Secrets plugin](../examples/plugins/secrets) is a complete example: a pi tool `request_secret` that waits while the plugin asks for the value in a masked field, stores it in a file and tells the tool only the outcome.
 
 ## Protocol 1
 
@@ -74,6 +83,8 @@ Every message is a JSON object on a single line; lines end with `\n`. A message 
 | `command.run` | `command`, `workspace?`, `session?` | the user pressed a button or keybinding |
 | `view.open` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi called a tool this plugin draws; stream to `callId` from now on |
 | `view.focus` | `callId`, `focused` | the view got or lost the keyboard |
+| `tool.start` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi started a call of a tool in `contributes.toolEvents` |
+| `prompt.result` | `id`, `value` or `cancelled`, `closed?` | the user answered or cancelled a prompt; `closed` means its tool call ended first |
 | `view.key` | `callId`, `key`, `down` | a key went down or up in a focused view. `key` is GPUI's name (`up`, `space`, `a`; the typed character on non-Latin layouts); modifiers come as `control`, `shift`, `alt` |
 
 ### Plugin → app
@@ -87,6 +98,8 @@ Every message is a JSON object on a single line; lines end with `\n`. A message 
 | `status.clear` | `id` | removes a status item |
 | `notify` | `message`, `tone?` | a notice in the window |
 | `view.frame` | `callId`, `data`, `mimeType` | a frame for a live view: base64 `image/jpeg` or `image/png`. Ignored unless `callId` is the call the plugin streams to |
+| `prompt.input` | `id`, `callId`, `title`, `description?`, `placeholder?`, `submitLabel?`, `secret?` | a text field in that tool call (see Prompts). The same `id` again updates the open prompt |
+| `prompt.close` | `id` | removes an open prompt without an answer |
 | `log` | `message` | a line in the app log (stderr) |
 
 The app ignores unknown methods, so the protocol can grow without breaking older plugins.

@@ -63,6 +63,21 @@ pub struct ToolView {
     pub aspect: f32,
 }
 
+/// A text field a plugin asks for inside a tool call (`prompt.input`), for
+/// example the value of a secret the agent requested.
+#[derive(Clone)]
+pub struct PluginPrompt {
+    pub plugin_id: SharedString,
+    pub id: SharedString,
+    pub call_id: SharedString,
+    pub title: SharedString,
+    pub description: Option<SharedString>,
+    pub placeholder: SharedString,
+    pub submit_label: SharedString,
+    /// Typed text is shown as dots and never copied.
+    pub secret: bool,
+}
+
 /// Frames of plugin views. Separate from the registry so a frame only
 /// re-renders the chats, not everything that watches plugins.
 #[derive(Default)]
@@ -129,6 +144,11 @@ pub struct PluginRegistry {
     active_commands: HashSet<SharedString>,
     statuses: Vec<StatusItem>,
     tool_views: Vec<ToolView>,
+    /// Tools whose calls a plugin follows (`contributes.toolEvents`): plugin
+    /// id and tool name.
+    tool_events: Vec<(SharedString, SharedString)>,
+    /// Open `prompt.input` fields, oldest first.
+    prompts: Vec<PluginPrompt>,
     /// pi extensions plugins ship (`contributes.piExtensions`), loaded into
     /// every pi this app starts.
     pi_extensions: Vec<PathBuf>,
@@ -155,6 +175,8 @@ impl PluginRegistry {
             active_commands: HashSet::new(),
             statuses: Vec::new(),
             tool_views: Vec::new(),
+            tool_events: Vec::new(),
+            prompts: Vec::new(),
             pi_extensions: Vec::new(),
             frames: cx.new(|_| ViewFrames::default()),
             _load_task: load_task,
@@ -198,6 +220,12 @@ impl PluginRegistry {
             }
             self.commands.extend(parsed.commands);
             self.tool_views.extend(parsed.tool_views);
+            self.tool_events.extend(
+                parsed
+                    .tool_events
+                    .into_iter()
+                    .map(|tool| (parsed.id.clone(), tool)),
+            );
             self.pi_extensions.extend(parsed.pi_extensions);
             self.plugins.push(Plugin {
                 id: parsed.id,
@@ -288,6 +316,123 @@ impl PluginRegistry {
             },
         });
         self.send(&view.plugin_id, message, cx);
+    }
+
+    /// pi started a tool call: tells the plugins that follow this tool.
+    pub fn tool_started(
+        &mut self,
+        tool: &str,
+        call_id: &str,
+        args: &Value,
+        context: &CommandContext,
+        cx: &mut Context<Self>,
+    ) {
+        let followers: Vec<SharedString> = self
+            .tool_events
+            .iter()
+            .filter(|(_, followed)| followed == tool)
+            .map(|(plugin_id, _)| plugin_id.clone())
+            .collect();
+        for plugin_id in followers {
+            let message = json!({
+                "method": "tool.start",
+                "params": {
+                    "tool": tool,
+                    "callId": call_id,
+                    "args": args,
+                    "workspace": context.workspace,
+                    "session": context.session,
+                },
+            });
+            self.send(&plugin_id, message, cx);
+        }
+    }
+
+    pub fn prompts(&self) -> &[PluginPrompt] {
+        &self.prompts
+    }
+
+    /// Sends the answer to an open prompt and removes it. `None` cancels;
+    /// `closed` tells the plugin nobody waits for an answer anymore (the tool
+    /// call ended).
+    pub fn answer_prompt(
+        &mut self,
+        plugin_id: &str,
+        id: &str,
+        value: Option<String>,
+        closed: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(position) = self
+            .prompts
+            .iter()
+            .position(|prompt| prompt.plugin_id == plugin_id && prompt.id == id)
+        else {
+            return;
+        };
+        let prompt = self.prompts.remove(position);
+        let params = match value {
+            Some(value) => json!({ "id": prompt.id, "value": value }),
+            None => json!({ "id": prompt.id, "cancelled": true, "closed": closed }),
+        };
+        self.send(
+            &prompt.plugin_id,
+            json!({ "method": "prompt.result", "params": params }),
+            cx,
+        );
+        cx.notify();
+    }
+
+    /// A tool call ended: its prompts have nobody to answer anymore.
+    pub fn close_prompts_for_call(&mut self, call_id: &str, cx: &mut Context<Self>) {
+        let open: Vec<(SharedString, SharedString)> = self
+            .prompts
+            .iter()
+            .filter(|prompt| prompt.call_id == call_id)
+            .map(|prompt| (prompt.plugin_id.clone(), prompt.id.clone()))
+            .collect();
+        for (plugin_id, id) in open {
+            self.answer_prompt(&plugin_id, &id, None, true, cx);
+        }
+    }
+
+    fn open_prompt(&mut self, plugin_id: &SharedString, params: &Value) {
+        let text = |key: &str| {
+            params[key]
+                .as_str()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+                .map(|text| SharedString::from(text.to_string()))
+        };
+        let (Some(id), Some(call_id)) = (text("id"), text("callId")) else {
+            eprintln!("pi-gpui: plugin {plugin_id}: prompt.input needs an id and a callId");
+            return;
+        };
+        let secret = params["secret"].as_bool().unwrap_or(false);
+        let prompt = PluginPrompt {
+            plugin_id: plugin_id.clone(),
+            title: text("title").unwrap_or_else(|| "Input".into()),
+            description: text("description"),
+            placeholder: text("placeholder").unwrap_or_else(|| {
+                if secret {
+                    "Paste or type the value".into()
+                } else {
+                    "Type your answer".into()
+                }
+            }),
+            submit_label: text("submitLabel").unwrap_or_else(|| "Submit".into()),
+            secret,
+            id,
+            call_id,
+        };
+        match self
+            .prompts
+            .iter_mut()
+            .find(|open| open.plugin_id == *plugin_id && open.id == prompt.id)
+        {
+            Some(open) => *open = prompt,
+            None => self.prompts.push(prompt),
+        }
     }
 
     /// Keyboard input for a live view; ignored for calls that no longer stream.
@@ -560,6 +705,12 @@ impl PluginRegistry {
                 color: tone_color(params["tone"].as_str()),
             }),
             "view.frame" => self.apply_frame(plugin_id, params, cx),
+            "prompt.input" => self.open_prompt(plugin_id, params),
+            "prompt.close" => {
+                let id = params["id"].as_str().unwrap_or_default();
+                self.prompts
+                    .retain(|prompt| !(prompt.plugin_id == *plugin_id && prompt.id == id));
+            }
             "log" => eprintln!(
                 "pi-gpui: plugin {plugin_id}: {}",
                 params["message"].as_str().unwrap_or_default()
@@ -578,6 +729,7 @@ impl PluginRegistry {
     ) {
         // Whatever the plugin showed belongs to the process that just ended.
         self.statuses.retain(|item| item.plugin_id != *plugin_id);
+        self.prompts.retain(|prompt| prompt.plugin_id != *plugin_id);
         self.frames.update(cx, |frames, cx| {
             frames.live.remove(plugin_id);
             cx.notify();
@@ -690,6 +842,7 @@ struct ParsedManifest {
     run: Vec<String>,
     commands: Vec<PluginCommand>,
     tool_views: Vec<ToolView>,
+    tool_events: Vec<SharedString>,
     pi_extensions: Vec<PathBuf>,
 }
 
@@ -779,6 +932,14 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
             aspect: (height / width) as f32,
         });
     }
+    let tool_events = manifest["contributes"]["toolEvents"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|tool| !tool.is_empty())
+        .map(|tool| SharedString::from(tool.to_string()))
+        .collect();
     let mut pi_extensions = Vec::new();
     for extension in manifest["contributes"]["piExtensions"]
         .as_array()
@@ -799,6 +960,7 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         run,
         commands,
         tool_views,
+        tool_events,
         pi_extensions,
     })
 }

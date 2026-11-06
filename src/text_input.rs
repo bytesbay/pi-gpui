@@ -25,6 +25,10 @@ use crate::ui::ActiveTheme as _;
 pub const KEY_CONTEXT: &str = "TextInput";
 const LINE_HEIGHT: f32 = 22.;
 const MAX_VISIBLE_LINES: f32 = 10.;
+/// A masked field wraps its dots up to this many rows, then scrolls.
+const MAX_MASKED_LINES: f32 = 3.;
+/// Shown for every character of a masked field.
+const MASK_CHAR: char = '•';
 const UNDO_LIMIT: usize = 200;
 /// Consecutive typing within this window is undone as one step.
 const UNDO_COALESCE: Duration = Duration::from_millis(1000);
@@ -149,9 +153,42 @@ pub(crate) struct TextLayout {
     pub(crate) line_tops: Vec<Pixels>,
     pub(crate) line_height: Pixels,
     height: Pixels,
+    /// For a masked field: the real text. The shaped lines hold one
+    /// `MASK_CHAR` per character, so offsets are mapped between the two.
+    masked: Option<SharedString>,
 }
 
 impl TextLayout {
+    fn with_mask(mut self, content: SharedString) -> Self {
+        self.masked = Some(content);
+        self
+    }
+
+    /// Text offset → offset in the shaped (displayed) text.
+    fn display_offset(&self, offset: usize) -> usize {
+        match &self.masked {
+            Some(content) => {
+                let offset = offset.min(content.len());
+                content
+                    .get(..offset)
+                    .map_or(0, |prefix| prefix.chars().count())
+                    * MASK_CHAR.len_utf8()
+            }
+            None => offset,
+        }
+    }
+
+    /// Offset in the shaped text → text offset.
+    fn text_offset(&self, offset: usize) -> usize {
+        match &self.masked {
+            Some(content) => content
+                .char_indices()
+                .nth(offset / MASK_CHAR.len_utf8())
+                .map_or(content.len(), |(index, _)| index),
+            None => offset,
+        }
+    }
+
     pub(crate) fn new(lines: Vec<WrappedLine>, line_height: Pixels) -> Self {
         let mut line_starts = Vec::with_capacity(lines.len());
         let mut line_tops = Vec::with_capacity(lines.len());
@@ -168,6 +205,7 @@ impl TextLayout {
             line_tops,
             line_height,
             height: top.max(line_height),
+            masked: None,
         }
     }
 
@@ -179,6 +217,7 @@ impl TextLayout {
     }
 
     pub(crate) fn position_for_offset(&self, offset: usize) -> Point<Pixels> {
+        let offset = self.display_offset(offset);
         let Some(line) = self.lines.get(self.line_for_offset(offset)) else {
             return point(px(0.), px(0.));
         };
@@ -207,7 +246,7 @@ impl TextLayout {
             match line.closest_index_for_position(point(position.x, local_y), self.line_height) {
                 Ok(index) | Err(index) => index,
             };
-        self.line_starts[index] + local.min(line.len())
+        self.text_offset(self.line_starts[index] + local.min(line.len()))
     }
 
     /// Start and end of the visual (wrapped) row containing `offset`.
@@ -222,6 +261,8 @@ pub struct TextInput {
     content: SharedString,
     placeholder: SharedString,
     single_line: bool,
+    /// Shows a dot per character (passwords, keys); copy and cut do nothing.
+    masked: bool,
     /// Up and Down go to the parent even in a multi-line field (e.g. while a
     /// completion menu is open).
     vertical_passthrough: bool,
@@ -260,6 +301,7 @@ impl TextInput {
             content: SharedString::default(),
             placeholder: placeholder.into(),
             single_line: false,
+            masked: false,
             vertical_passthrough: false,
             selected_range: 0..0,
             selection_reversed: false,
@@ -416,6 +458,21 @@ impl TextInput {
     ) {
         self.placeholder = placeholder.into();
         cx.notify();
+    }
+
+    /// Hides or shows the text of a field holding a secret.
+    pub fn set_masked(&mut self, masked: bool, cx: &mut Context<Self>) {
+        self.masked = masked;
+        cx.notify();
+    }
+
+    pub fn is_masked(&self) -> bool {
+        self.masked
+    }
+
+    /// Multi-line fields wrap; so do masked ones, so a long key stays visible as dots.
+    fn wraps(&self) -> bool {
+        !self.single_line || self.masked
     }
 
     pub fn set_vertical_passthrough(&mut self, passthrough: bool) {
@@ -953,7 +1010,7 @@ impl TextInput {
     }
 
     fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -961,7 +1018,7 @@ impl TextInput {
     }
 
     fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut Context<Self>) {
-        if !self.selected_range.is_empty() {
+        if !self.selected_range.is_empty() && !self.masked {
             cx.write_to_clipboard(ClipboardItem::new_string(
                 self.content[self.selected_range.clone()].to_string(),
             ));
@@ -1217,6 +1274,9 @@ impl TextElement {
                 input.placeholder.clone(),
                 cx.theme().colors.text_placeholder,
             )
+        } else if input.masked {
+            let dots: String = input.content.chars().map(|_| MASK_CHAR).collect();
+            (dots.into(), style.color)
         } else {
             (input.content.clone(), style.color)
         };
@@ -1228,7 +1288,7 @@ impl TextElement {
             underline: None,
             strikethrough: None,
         };
-        let chips = if input.content.is_empty() {
+        let chips = if input.content.is_empty() || input.masked {
             Vec::new()
         } else {
             input.chips()
@@ -1260,7 +1320,7 @@ impl TextElement {
             return (text, runs);
         }
         let runs = match input.marked_range.as_ref() {
-            Some(marked) if !input.content.is_empty() => vec![
+            Some(marked) if !input.content.is_empty() && !input.masked => vec![
                 TextRun {
                     len: marked.start,
                     ..run.clone()
@@ -1316,7 +1376,7 @@ impl Element for TextElement {
         cx: &mut App,
     ) -> (LayoutId, Self::RequestLayoutState) {
         let (text, runs) = self.text_and_runs(window, cx);
-        let wrap = !self.input.read(cx).single_line;
+        let wrap = self.input.read(cx).wraps();
         let font_size = window.text_style().font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
         let mut style = Style::default();
@@ -1352,7 +1412,7 @@ impl Element for TextElement {
     ) -> Self::PrepaintState {
         let (text, runs) = self.text_and_runs(window, cx);
         let input = self.input.read(cx);
-        let wrap_width = (!input.single_line).then_some(bounds.size.width);
+        let wrap_width = input.wraps().then_some(bounds.size.width);
         let font_size = window.text_style().font_size.to_pixels(window.rem_size());
         let line_height = window.line_height();
         let Ok(lines) = window
@@ -1366,7 +1426,10 @@ impl Element for TextElement {
                 chips: Vec::new(),
             };
         };
-        let layout = TextLayout::new(lines.into_vec(), line_height);
+        let mut layout = TextLayout::new(lines.into_vec(), line_height);
+        if input.masked && !input.content.is_empty() {
+            layout = layout.with_mask(input.content.clone());
+        }
         let colors = cx.theme().colors.clone();
         let input = self.input.read(cx);
 
@@ -1588,7 +1651,9 @@ impl TextInput {
 
 impl Render for TextInput {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let max_lines = if self.single_line {
+        let max_lines = if self.single_line && self.masked {
+            MAX_MASKED_LINES
+        } else if self.single_line {
             1.
         } else {
             MAX_VISIBLE_LINES

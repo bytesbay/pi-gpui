@@ -2,6 +2,7 @@
 
 mod dialog;
 mod overlays;
+mod plugin_prompt;
 mod plugin_view;
 mod slash;
 mod tree;
@@ -61,6 +62,7 @@ actions!(
         DialogConfirm,
         DialogCancel,
         ReleasePluginView,
+        PromptCancel,
     ]
 );
 
@@ -118,6 +120,7 @@ pub fn bind_keys(cx: &mut App) {
             ReleasePluginView,
             Some(plugin_view::PLUGIN_VIEW_CONTEXT),
         ),
+        KeyBinding::new("escape", PromptCancel, Some(plugin_prompt::PROMPT_CONTEXT)),
     ]);
 }
 
@@ -371,6 +374,10 @@ pub struct ChatView {
     /// The call whose view has the keyboard, and the modifiers it last saw.
     focused_view: Option<(SharedString, gpui::Modifiers)>,
     _frames_subscription: Subscription,
+    /// Fields of plugin prompts open in this chat's tool calls.
+    prompt_fields: Vec<plugin_prompt::PromptField>,
+    /// Move focus to the newest prompt on the next render.
+    focus_prompt: bool,
 }
 
 impl EventEmitter<ChatEvent> for ChatView {}
@@ -394,8 +401,12 @@ impl ChatView {
             });
             cx.notify();
         });
-        // Plugin buttons in the composer reflect plugin state (e.g. recording).
-        let plugins_subscription = cx.observe(&plugins, |_, _, cx| cx.notify());
+        // Plugin buttons in the composer reflect plugin state (e.g. recording),
+        // and plugin prompts open and close in tool calls.
+        let plugins_subscription = cx.observe(&plugins, |this, _, cx| {
+            this.sync_plugin_prompts(cx);
+            cx.notify();
+        });
         // Plugin views repaint with every frame.
         let frames = plugins.read(cx).frames().clone();
         let frames_subscription = cx.observe(&frames, |_, _, cx| cx.notify());
@@ -482,6 +493,8 @@ impl ChatView {
             view_focus: cx.focus_handle(),
             focused_view: None,
             _frames_subscription: frames_subscription,
+            prompt_fields: Vec::new(),
+            focus_prompt: false,
         };
         this.start_process(cx);
         this
@@ -800,6 +813,14 @@ impl ChatView {
                     self.tool_rows
                         .insert(call_id.to_string(), self.rows.len() - 1);
                     self.open_plugin_view(record, call_id, cx);
+                    let context = CommandContext {
+                        workspace: Some(self.workspace.clone()),
+                        session: self.session_file.clone(),
+                    };
+                    let tool = record["toolName"].as_str().unwrap_or_default();
+                    self.plugins.update(cx, |registry, cx| {
+                        registry.tool_started(tool, call_id, &record["args"], &context, cx)
+                    });
                 }
             }
             "tool_execution_update" | "tool_execution_end" => {
@@ -834,6 +855,9 @@ impl ChatView {
                         };
                     }
                     changed.push(index);
+                }
+                if finished && let Some(call_id) = record["toolCallId"].as_str() {
+                    self.close_call_prompts(call_id, cx);
                 }
             }
             "auto_retry_start" => self.push_notice(
@@ -2158,6 +2182,7 @@ impl ChatView {
                 let plugin_view = view
                     .as_ref()
                     .map(|call_id| self.render_plugin_view(call_id, name, cx));
+                let plugin_prompt = self.render_plugin_prompt(index, window, cx);
                 let has_details = !output.is_empty() || !images.is_empty();
                 let open = expanded.unwrap_or(default_open) && has_details;
                 let status_icon = match status {
@@ -2239,6 +2264,7 @@ impl ChatView {
                                 }),
                         )
                     })
+                    .children(plugin_prompt)
                     .children(plugin_view)
                     .into_any_element()
             }
@@ -2891,6 +2917,7 @@ impl Focusable for ChatView {
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         self.focus_pending_dialog(window, cx);
+        self.focus_new_prompt(window, cx);
         self.sync_plugin_view_focus(window, cx);
         let colors = cx.theme().colors.clone();
         let body = if self.rows.is_empty() {
