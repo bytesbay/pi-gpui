@@ -71,8 +71,15 @@ if (rotor && !reduceMotion && "animate" in rotor) {
     );
 
     await sleep(130);
-    const top = piece(text, `polygon(0 0, 100% 0, 100% ${RIGHT * 100}%, 0 ${LEFT * 100}%)`);
-    const bottom = piece(text, `polygon(0 ${LEFT * 100}%, 100% ${RIGHT * 100}%, 100% 100%, 0 100%)`);
+    // The halves are padded around the ink; the cut runs through the line
+    // box, so shift it by the padding. The pad edges extend the cut line.
+    const pad = parseFloat(getComputedStyle(rotor).paddingTop);
+    const side = parseFloat(getComputedStyle(rotor).paddingLeft);
+    const slope = rise / width;
+    const atLeft = pad + LEFT * height + side * slope;
+    const atRight = pad + RIGHT * height - side * slope;
+    const top = piece(text, `polygon(0 0, 100% 0, 100% ${atRight}px, 0 ${atLeft}px)`);
+    const bottom = piece(text, `polygon(0 ${atLeft}px, 100% ${atRight}px, 100% 100%, 0 100%)`);
     stage.classList.add("cut");
     // The halves slide apart along the cut, then drop and fade.
     const along = 0.06 * height;

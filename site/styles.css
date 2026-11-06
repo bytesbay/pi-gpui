@@ -156,7 +156,10 @@ h1 {
    of the word, which keeps its width while they fly. */
 .word { position: relative; display: inline-block; }
 .word.cut { color: transparent; }
-.piece { position: absolute; left: 0; top: 0; color: var(--accent); white-space: nowrap; pointer-events: none; will-change: transform, opacity, filter; }
+/* Glyphs reach past the tight line box (descenders of p, y, g). Filters and
+   clip paths cut at the box, so the text and the halves get room around the
+   ink, and negative margins keep the layout as it was. */
+.piece { position: absolute; left: -0.15em; top: -0.3em; padding: 0.3em 0.15em; color: var(--accent); white-space: nowrap; pointer-events: none; will-change: transform, opacity, filter; }
 .streak {
   position: absolute;
   left: 0;
@@ -427,4 +430,4 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
 .how .hint { font-size: 12px; margin-top: 24px; }
 .how .eyebrow { font-size: 12px; color: var(--accent); }
 .steps .tag { align-self: flex-start; }
-.word > [data-rotor] { display: inline-block; }
+.word > [data-rotor] { display: inline-block; padding: 0.3em 0.15em; margin: -0.3em -0.15em; }
