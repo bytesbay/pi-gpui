@@ -19,27 +19,98 @@ fetch("https://api.github.com/repos/bytesbay/pi-gpui/releases/latest")
   })
   .catch(() => {});
 
-// "A native Mac app for ___": types and erases a few endings.
+// "A native Mac app for ___": a katana cuts the word in two, like the
+// logo, the halves slide apart and fade, and the next word comes in.
 const rotor = document.querySelector("[data-rotor]");
-if (rotor && !reduceMotion) {
-  const words = ["pi", "your agent", "pi sessions", "pi"];
+if (rotor && !reduceMotion && "animate" in rotor) {
+  // Halves and the streak live next to the text, so changing the text
+  // does not remove them mid-flight.
+  const stage = rotor.parentElement;
+  const words = ["pi", "your agent", "pi sessions"];
   let word = 0;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const done = (animation) => animation.finished.catch(() => {});
+
+  // The cut rises to the right, from 68% of the height on the left to 34% on the right.
+  const LEFT = 0.68;
+  const RIGHT = 0.34;
+
+  function piece(text, clip) {
+    const element = document.createElement("span");
+    element.className = "piece";
+    element.setAttribute("aria-hidden", "true");
+    element.textContent = text;
+    element.style.clipPath = clip;
+    stage.append(element);
+    return element;
+  }
+
+  async function slice() {
+    const { width, height } = stage.getBoundingClientRect();
+    const text = rotor.textContent;
+    const rise = (LEFT - RIGHT) * height;
+    const angle = Math.atan2(rise, width);
+
+    // The streak: a thin line of light drawn along the cut, a bit past both ends.
+    const streak = document.createElement("span");
+    streak.className = "streak";
+    const overshoot = 0.12 * width;
+    const length = Math.hypot(width, rise) + overshoot * 2;
+    streak.style.width = `${length}px`;
+    const startX = -overshoot * Math.cos(angle);
+    const startY = LEFT * height + overshoot * Math.sin(angle);
+    const place = `translate(${startX}px, ${startY}px) rotate(${-angle}rad)`;
+    stage.append(streak);
+    const draw = streak.animate(
+      [
+        { transform: `${place} scaleX(0)`, opacity: 1 },
+        { transform: `${place} scaleX(1)`, opacity: 1, offset: 0.55 },
+        { transform: `${place} scaleX(1)`, opacity: 0 },
+      ],
+      { duration: 420, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "forwards" },
+    );
+
+    await sleep(130);
+    const top = piece(text, `polygon(0 0, 100% 0, 100% ${RIGHT * 100}%, 0 ${LEFT * 100}%)`);
+    const bottom = piece(text, `polygon(0 ${LEFT * 100}%, 100% ${RIGHT * 100}%, 100% 100%, 0 100%)`);
+    stage.classList.add("cut");
+    // The halves slide apart along the cut, then drop and fade.
+    const along = 0.06 * height;
+    const fall = {
+      duration: 1100,
+      easing: "cubic-bezier(0.3, 0.6, 0.3, 1)",
+      fill: "forwards",
+    };
+    const fadeOut = (dx, dy, turn) => [
+      { transform: "none", opacity: 1, filter: "blur(0)" },
+      { transform: `translate(${dx * 0.35}px, ${dy * 0.15}px) rotate(${turn * 0.3}deg)`, opacity: 1, filter: "blur(0)", offset: 0.2 },
+      { transform: `translate(${dx * 0.7}px, ${dy * 0.55}px) rotate(${turn * 0.7}deg)`, opacity: 0.75, filter: "blur(1.5px)", offset: 0.55 },
+      { transform: `translate(${dx}px, ${dy}px) rotate(${turn}deg)`, opacity: 0, filter: "blur(6px)" },
+    ];
+    const flyTop = top.animate(fadeOut(along * 2.2, -0.32 * height, -5), fall);
+    const flyBottom = bottom.animate(fadeOut(-along * 1.6, 0.42 * height, 4), { ...fall, delay: 40 });
+
+    await sleep(760);
+    word = (word + 1) % words.length;
+    rotor.textContent = words[word];
+    stage.classList.remove("cut");
+    rotor.animate(
+      [
+        { opacity: 0, filter: "blur(8px)", transform: "translateY(0.06em) scale(0.98)" },
+        { opacity: 1, filter: "blur(0)", transform: "none" },
+      ],
+      { duration: 700, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
+    );
+    await Promise.all([done(draw), done(flyTop), done(flyBottom)]);
+    streak.remove();
+    top.remove();
+    bottom.remove();
+  }
+
   (async function loop() {
-    await sleep(2600);
     for (;;) {
-      const current = words[word];
-      for (let i = current.length; i >= 0; i--) {
-        rotor.textContent = current.slice(0, i);
-        await sleep(45);
-      }
-      word = (word + 1) % words.length;
-      const next = words[word];
-      for (let i = 1; i <= next.length; i++) {
-        rotor.textContent = next.slice(0, i);
-        await sleep(70 + Math.random() * 60);
-      }
-      await sleep(word === words.length - 1 ? 5200 : 2200);
+      await sleep(word === 0 ? 4200 : 2400);
+      await slice();
     }
   })();
 }
