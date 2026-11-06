@@ -82,6 +82,26 @@ script/release.sh       # tag the Cargo.toml version; CI builds and publishes th
 
 Rust 1.90 (pinned) and Xcode. Shaders compile at startup, so the Metal Toolchain is not needed. Set `PI_GPUI_PRETEND_VERSION=<older>` to try the update flow against a real release.
 
+### Signing
+
+Releases are signed with a Developer ID certificate and notarized, so Gatekeeper opens them without a warning. The release workflow needs these repository secrets:
+
+| Secret | What |
+| --- | --- |
+| `MACOS_CERTIFICATE_P12` | Developer ID Application certificate with its private key, exported as .p12, base64 (`base64 -i cert.p12 \| pbcopy`) |
+| `MACOS_CERTIFICATE_PASSWORD` | the password set when exporting the .p12 |
+| `APPLE_API_KEY_P8` | App Store Connect API key (.p8 file contents), role Developer |
+| `APPLE_API_KEY_ID` | that key's ID |
+| `APPLE_API_ISSUER_ID` | the Issuer ID shown above the keys list |
+
+To sign and notarize locally:
+
+```sh
+xcrun notarytool store-credentials pi-gpui   # once; asks for the API key or an app-specific password
+SIGN_IDENTITY="Developer ID Application: Your Name (TEAMID)" script/bundle.sh
+NOTARY_PROFILE=pi-gpui script/notarize.sh
+```
+
 Docs: [principles](docs/APP_PRINCIPLES.md), [GPUI practices](docs/GPUI_STYLE_GUIDE.md), [plugins](docs/PLUGINS.md).
 
 The app bundles [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (SIL Open Font License 1.1, `assets/fonts/OFL.txt`).

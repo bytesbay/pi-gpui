@@ -20,5 +20,16 @@ sed "s/__VERSION__/$version/g" resources/Info.plist > "$app/Contents/Info.plist"
 cp resources/AppIcon.icns "$app/Contents/Resources/AppIcon.icns"
 # The bundled JetBrains Mono font is distributed under this license.
 cp assets/fonts/OFL.txt "$app/Contents/Resources/JetBrainsMono-OFL.txt"
-codesign --force --sign - "$app"
+# With SIGN_IDENTITY (a "Developer ID Application: ..." certificate in the
+# keychain) the app is signed for distribution: hardened runtime and a secure
+# timestamp, as notarization requires. Without it, an ad-hoc signature is
+# enough to run the app on this Mac.
+if [ -n "${SIGN_IDENTITY:-}" ]; then
+    codesign --force --options runtime --timestamp \
+        --entitlements resources/entitlements.plist \
+        --sign "$SIGN_IDENTITY" "$app"
+    codesign --verify --strict --verbose=2 "$app"
+else
+    codesign --force --sign - "$app"
+fi
 echo "$app"
