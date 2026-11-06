@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi GPUI: a native macOS app for the pi coding agent</title>
-<meta name="description" content="Pi GPUI is a fast native Mac interface for the pi coding agent. A pi GUI written in Rust with GPUI and Metal that runs your installed pi, with sessions, forks, a session tree and slash commands. A desktop alternative to the Claude Code app.">
+<title>Pi GPUI: the native Mac client for the pi coding agent</title>
+<meta name="description" content="Pi GPUI is a native Mac client for the pi coding agent, written in Rust with GPUI and Metal. It runs your installed pi with its sessions, forks, session tree and slash commands. Free, MIT licensed, a desktop alternative to the Claude Code app.">
 <meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, claude code app alternative, claude code desktop alternative, ai coding agent gui">
 <link rel="canonical" href="https://pi-gpui.dev/">
 <meta name="theme-color" content="#0b0e14">
@@ -13,21 +13,21 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Pi GPUI">
 <meta property="og:url" content="https://pi-gpui.dev/">
-<meta property="og:title" content="Pi GPUI: a native macOS app for the pi coding agent">
-<meta property="og:description" content="A fast native Mac interface for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
+<meta property="og:title" content="Pi GPUI: the native Mac client for the pi coding agent">
+<meta property="og:description" content="A native Mac client for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
 <meta property="og:image" content="https://pi-gpui.dev/img/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pi GPUI: a native macOS app for the pi coding agent">
-<meta name="twitter:description" content="A fast native Mac interface for pi, written in Rust with GPUI.">
+<meta name="twitter:title" content="Pi GPUI: the native Mac client for the pi coding agent">
+<meta name="twitter:description" content="A native Mac client for pi, written in Rust with GPUI.">
 <meta name="twitter:image" content="https://pi-gpui.dev/img/og.jpg">
 
 <link rel="icon" href="/img/icon.svg" type="image/svg+xml">
 <link rel="icon" href="/img/favicon-64.png" type="image/png" sizes="64x64">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 <link rel="preload" href="/fonts/JetBrainsMonoNL-Regular.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=4">
+<link rel="stylesheet" href="/styles.css?v=5">
 
 <script type="application/ld+json">
 {
@@ -35,7 +35,8 @@
   "@type": "SoftwareApplication",
   "name": "Pi GPUI",
   "alternateName": ["pi gui", "pi interface", "pi desktop app"],
-  "description": "A fast native macOS app for the pi coding agent, written in Rust with GPUI and Metal.",
+  "description": "A native Mac client for the pi coding agent, written in Rust with GPUI and Metal.",
+  "license": "https://opensource.org/licenses/MIT",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS (Apple silicon)",
   "url": "https://pi-gpui.dev/",
@@ -54,7 +55,7 @@
   "@type": "FAQPage",
   "mainEntity": [
     { "@type": "Question", "name": "What is Pi GPUI?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A native macOS interface for the pi coding agent. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in a window drawn by GPUI on the GPU." } },
+      "acceptedAnswer": { "@type": "Answer", "text": "A native Mac client for the pi coding agent. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in a window drawn by GPUI on the GPU." } },
     { "@type": "Question", "name": "Is Pi GPUI an alternative to the Claude Code app?",
       "acceptedAnswer": { "@type": "Answer", "text": "If you want a desktop app for an agentic coding workflow, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other model providers. You keep pi's models, extensions and skills, and get a native Mac window around them." } },
     { "@type": "Question", "name": "Is it written in Rust?",
@@ -64,7 +65,7 @@
     { "@type": "Question", "name": "Which Macs does it run on?",
       "acceptedAnswer": { "@type": "Answer", "text": "Macs with Apple silicon. The app updates itself from GitHub releases." } },
     { "@type": "Question", "name": "Is it free?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The download is free and the source is on GitHub." } }
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free and open source under the MIT license, with the source on GitHub." } }
   ]
 }
 </script>
@@ -78,6 +79,7 @@
     <span>Pi GPUI</span>
   </a>
   <nav>
+    <a href="#start">Get started</a>
     <a href="#features">Features</a>
     <a href="#how">How it works</a>
     <a href="#tour">Tour</a>
@@ -94,7 +96,7 @@
       <span class="dot"></span><span data-version>Latest release</span><span class="pill-sep">·</span>macOS, Apple silicon
     </a>
     <h1>A native Mac app<br>for <span class="rotor" aria-live="polite"><span data-rotor>pi</span><span class="caret"></span></span></h1>
-    <p class="lead">Pi GPUI is an interface for the pi coding agent. It runs the pi you already have, with your models, extensions, skills and sessions, in a window written in Rust and drawn on the GPU.</p>
+    <p class="lead">Pi GPUI is a native Mac client for the pi coding agent. It runs the pi you already have, with your models, extensions, skills and sessions. The window is written in Rust and drawn on the GPU.</p>
     <div class="cta">
       <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 12.5V14h12v-1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -102,7 +104,7 @@
       </a>
       <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">View source</a>
     </div>
-    <p class="hint mono">Needs <a href="https://github.com/earendil-works/pi" rel="noopener">pi</a> 1.4+ · free · updates itself</p>
+    <p class="hint mono">Needs <a href="https://github.com/earendil-works/pi" rel="noopener">pi</a> 1.4+ · free, MIT licensed · signed and notarized by Apple</p>
   </section>
 
   <section class="demo reveal" aria-label="Pi GPUI in use">
@@ -117,6 +119,32 @@
     <div><span class="mono label">UI</span><strong>GPUI</strong></div>
     <div><span class="mono label">Rendering</span><strong>Metal</strong></div>
     <div><span class="mono label">Agent</span><strong>pi over RPC</strong></div>
+  </section>
+
+  <section id="start" class="section">
+    <p class="mono eyebrow">Get started</p>
+    <h2>Three steps, and your sessions are already there.</h2>
+    <div class="grid steps">
+      <article class="card">
+        <span class="mono tag">1</span>
+        <h3>Install pi</h3>
+        <p>Skip this if <code>pi</code> already runs in your terminal.</p>
+        <pre class="cmd mono"><span class="muted">$</span> curl -fsSL https://pi.dev/install.sh | sh</pre>
+      </article>
+      <article class="card">
+        <span class="mono tag">2</span>
+        <h3>Log in</h3>
+        <p>Use the subscription or API key you already pay for. Pi GPUI never sees it.</p>
+        <pre class="cmd mono"><span class="muted">$</span> pi
+<span class="muted">&gt;</span> /login</pre>
+      </article>
+      <article class="card">
+        <span class="mono tag">3</span>
+        <h3>Open Pi GPUI</h3>
+        <p>Move it to Applications and open it. It finds your pi, including nvm installs, and lists your projects and sessions.</p>
+        <p class="hint mono"><a data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">Download for macOS</a></p>
+      </article>
+    </div>
   </section>
 
   <section id="features" class="section">
@@ -215,7 +243,7 @@ models · tools · extensions · your files</pre>
       <p class="mono eyebrow">Hackable</p>
       <h2>Can it run DOOM?</h2>
       <p>Yes. Pi GPUI is made to be hacked. Plugins in any language can add buttons, give pi new tools and draw live views right in the chat. If it runs on your Mac, it can run in your chat.</p>
-      <p class="hint mono"><a href="https://github.com/bytesbay/pi-gpui/blob/main/docs/PLUGINS.md" rel="noopener">How plugins work</a> · <a href="https://github.com/bytesbay/pi-gpui/tree/main/examples/plugins/doom" rel="noopener">The DOOM plugin</a></p>
+      <p class="hint mono"><a href="https://github.com/bytesbay/pi-gpui/blob/main/docs/PLUGINS.md" rel="noopener">How plugins work</a> · <a href="https://github.com/bytesbay/pi-gpui/tree/main/examples/plugins/doom" rel="noopener">The DOOM plugin</a> · <a href="https://github.com/bytesbay/pi-gpui/tree/main/examples/plugins/secrets" rel="noopener">The Secrets plugin</a></p>
     </div>
     <figure class="doom-shot">
       <div class="frame">
@@ -226,12 +254,26 @@ models · tools · extensions · your files</pre>
    </div>
   </section>
 
+  <section id="fork" class="section how">
+    <div>
+      <p class="mono eyebrow">Open source</p>
+      <h2>Don't like something? Change it.</h2>
+      <p>The whole app is MIT licensed Rust. Clone it, run it from source and change whatever you want: the look, the keys, the way sessions work. Plugins cover a lot without touching the app, and you can ship your own build.</p>
+      <p class="hint mono"><a href="https://github.com/bytesbay/pi-gpui" rel="noopener">Source on GitHub</a> · <a href="https://github.com/bytesbay/pi-gpui/issues" rel="noopener">Issues</a> · <a href="https://github.com/bytesbay/pi-gpui/blob/main/LICENSE" rel="noopener">MIT license</a></p>
+    </div>
+    <pre class="diagram mono" aria-label="Build from source"><span class="muted">$</span> git clone https://github.com/bytesbay/pi-gpui
+<span class="muted">$</span> cd pi-gpui
+<span class="muted">$</span> cargo run
+<span class="c-info">  Compiling</span> pi-gpui
+<span class="c-accent">  Running</span> target/debug/pi-gpui</pre>
+  </section>
+
   <section id="faq" class="section faq">
     <p class="mono eyebrow">FAQ</p>
     <h2>Questions</h2>
     <details open>
       <summary>What is Pi GPUI?</summary>
-      <p>A native macOS interface for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in one window.</p>
+      <p>A native Mac client for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>. It starts your installed pi in RPC mode and shows projects, sessions, tool calls and answers in one window.</p>
     </details>
     <details>
       <summary>Is it an alternative to the Claude Code app?</summary>
@@ -247,11 +289,11 @@ models · tools · extensions · your files</pre>
     </details>
     <details>
       <summary>Which Macs does it run on?</summary>
-      <p>Macs with Apple silicon. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
+      <p>Macs with Apple silicon. Releases are signed and notarized by Apple, so macOS opens them without a warning. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
     </details>
     <details>
       <summary>Is it free?</summary>
-      <p>Yes. Free to download, source on <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>.</p>
+      <p>Yes. It is open source under the MIT license, with the source on <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>. You pay only your model provider, through pi.</p>
     </details>
   </section>
 
@@ -265,9 +307,13 @@ models · tools · extensions · your files</pre>
 </main>
 
 <footer class="footer mono">
-  <span>Pi GPUI</span>
+  <span>Pi GPUI · MIT licensed · signed and notarized by Apple</span>
   <span class="muted">Not affiliated with Anthropic. pi is made by its own authors.</span>
-  <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+  <span class="footer-links">
+    <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+    <a href="https://github.com/bytesbay/pi-gpui/releases" rel="noopener">Releases</a>
+    <a href="https://github.com/bytesbay/pi-gpui/issues" rel="noopener">Issues</a>
+  </span>
 </footer>
 
 <script src="/main.js?v=3" defer></script>

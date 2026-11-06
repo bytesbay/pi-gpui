@@ -4,11 +4,11 @@
 
 Website: [pi-gpui.dev](https://pi-gpui.dev)
 
-A fast native macOS app for [pi](https://github.com/earendil-works/pi), built with GPUI. It runs your installed pi over RPC, so your models, extensions, skills and sessions work as they do in the terminal.
+A native Mac client for [pi](https://github.com/earendil-works/pi), written in Rust with GPUI. It runs your installed pi over RPC, so your models, extensions, skills and sessions work as they do in the terminal.
 
 ## Install
 
-Download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar.
+Download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar.
 
 Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH` or your login shell (so nvm installs work).
 
@@ -105,3 +105,7 @@ NOTARY_PROFILE=pi-gpui script/notarize.sh
 Docs: [principles](docs/APP_PRINCIPLES.md), [GPUI practices](docs/GPUI_STYLE_GUIDE.md), [plugins](docs/PLUGINS.md).
 
 The app bundles [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) (SIL Open Font License 1.1, `assets/fonts/OFL.txt`).
+
+## License
+
+MIT, see [LICENSE](LICENSE).

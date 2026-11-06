@@ -367,6 +367,23 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   color: var(--muted);
 }
 .footer a { color: var(--muted); }
+.footer-links { display: flex; gap: 16px; }
+
+/* Get started */
+.steps .card { display: flex; flex-direction: column; }
+.steps .card p + p { margin-top: 8px; }
+.cmd {
+  margin: 18px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--bg-2);
+  font-size: 12.5px;
+  line-height: 1.7;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
 
 /* Scroll reveal */
 .reveal { opacity: 0; transform: translateY(24px); transition: opacity 0.9s ease, transform 0.9s ease; }
@@ -392,3 +409,6 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   *, *::before, *::after { animation: none !important; transition: none !important; }
   .reveal { opacity: 1; transform: none; }
 }
+.how .hint { font-size: 12px; margin-top: 24px; }
+.how .eyebrow { font-size: 12px; color: var(--accent); }
+.steps .tag { align-self: flex-start; }
