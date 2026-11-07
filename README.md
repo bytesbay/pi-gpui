@@ -1,16 +1,34 @@
 # Pi GPUI
 
-![Pi GPUI](docs/banner.png)
+A native Mac app for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, so your models, extensions, skills and sessions work as they do in the terminal.
 
-Website: [pi-gpui.dev](https://pi-gpui.dev)
+[Website](https://pi-gpui.dev) · [Download](https://github.com/bytesbay/pi-gpui/releases/latest) · [Plugins](docs/PLUGINS.md) · [中文](docs/README.zh-CN.md)
 
-A native Mac client for [pi](https://github.com/earendil-works/pi), written in Rust with GPUI. It runs your installed pi over RPC, so your models, extensions, skills and sessions work as they do in the terminal.
+![Pi GPUI: projects and sessions in the sidebar, an extension question answered inline](docs/demo.gif)
 
 ## Install
 
-Download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar.
+```sh
+brew install --cask bytesbay/tap/pi-gpui
+```
+
+Or download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar. Apple Silicon, macOS 13 or newer.
 
 Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH` or your login shell (so nvm installs work).
+
+To move a session you started in the terminal into the app, add the `/gpui` command to pi:
+
+```sh
+pi install npm:pi-gpui
+```
+
+`/gpui` closes that pi and opens the same session in Pi GPUI. Other tools can do the same with a link: `open "pi-gpui://open?workspace=/path/to/project&session=/path/to/session.jsonl"` (the session is optional).
+
+## It runs DOOM
+
+Plugins can draw live views inside tool calls, in any language. [This one](examples/plugins/doom) gives pi a `doom` tool:
+
+![DOOM running inside a pi tool call in Pi GPUI](docs/doom.gif)
 
 ## Features
 
