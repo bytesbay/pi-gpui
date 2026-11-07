@@ -232,6 +232,101 @@ impl ChatView {
         }
     }
 
+    /// The question pi waits on, for plugins (`sessions.get`).
+    pub(super) fn pending_dialog_info(&self) -> Value {
+        let Some(dialog) = &self.dialog else {
+            return Value::Null;
+        };
+        let Some(Row::Dialog(row)) = self.rows.get(dialog.row) else {
+            return Value::Null;
+        };
+        let (kind, message) = match &row.kind {
+            DialogKind::Select(_) => ("select", None),
+            DialogKind::Confirm(message) => ("confirm", Some(message.clone())),
+            DialogKind::Input => ("input", None),
+            DialogKind::Editor => ("editor", None),
+        };
+        json!({
+            "id": dialog.id,
+            "kind": kind,
+            "title": row.title,
+            "message": message,
+            "options": row.kind.choices(),
+        })
+    }
+
+    /// A plugin answers the pending dialog: `answer` (an option, its 1-based
+    /// number, or text), `confirmed`, or `cancel`.
+    pub(super) fn answer_dialog_for_plugin(
+        &mut self,
+        id: &str,
+        params: &Value,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let Some(dialog) = &self.dialog else {
+            return Err("pi is not waiting for an answer".into());
+        };
+        if dialog.id != id {
+            return Err(format!("pi is not waiting on question {id}"));
+        }
+        let Some(Row::Dialog(row)) = self.rows.get(dialog.row) else {
+            return Err("the question is gone".into());
+        };
+        if params["cancel"].as_bool() == Some(true) {
+            self.cancel_dialog(cx);
+            return Ok(());
+        }
+        let answer = params["answer"].as_str().map(str::trim);
+        match &row.kind {
+            DialogKind::Confirm(_) => {
+                let confirmed = match (params["confirmed"].as_bool(), answer) {
+                    (Some(confirmed), _) => confirmed,
+                    (None, Some(answer)) => matches!(
+                        answer.to_lowercase().as_str(),
+                        "yes" | "y" | "true" | "1" | "да"
+                    ),
+                    (None, None) => return Err("give confirmed: true or false".into()),
+                };
+                let label = if confirmed { "Yes" } else { "No" };
+                self.answer_dialog(
+                    json!({ "confirmed": confirmed }),
+                    DialogState::Answered(label.to_string()),
+                    cx,
+                );
+            }
+            DialogKind::Select(options) => {
+                let answer = answer.ok_or("give answer: one of the options")?;
+                let choice = match answer.parse::<usize>() {
+                    Ok(number) if (1..=options.len()).contains(&number) => {
+                        options[number - 1].clone()
+                    }
+                    _ => options
+                        .iter()
+                        .find(|option| option.trim() == answer)
+                        .cloned()
+                        .ok_or_else(|| format!("not an option: {answer}"))?,
+                };
+                self.answer_dialog(
+                    json!({ "value": choice }),
+                    DialogState::Answered(choice.clone()),
+                    cx,
+                );
+            }
+            DialogKind::Input | DialogKind::Editor => {
+                let text = answer.ok_or("give answer: the text")?.to_string();
+                if row.kind.uses_composer() {
+                    self.composer.update(cx, |composer, cx| composer.clear(cx));
+                }
+                self.answer_dialog(
+                    json!({ "value": text }),
+                    DialogState::Answered(text.clone()),
+                    cx,
+                );
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn cancel_dialog(&mut self, cx: &mut Context<Self>) {
         self.answer_dialog(json!({ "cancelled": true }), DialogState::Cancelled, cx);
     }

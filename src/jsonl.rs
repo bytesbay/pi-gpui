@@ -81,7 +81,13 @@ impl JsonlProcess {
     /// Queues one command. Writing happens on a dedicated thread, so a full
     /// pipe never blocks the UI.
     pub fn send(&self, command: Value) -> Result<(), String> {
-        let line = command.to_string();
+        let mut line = command.to_string();
+        // Valid inside JSON strings, but Node's readline splits lines on them.
+        if line.contains(['\u{2028}', '\u{2029}']) {
+            line = line
+                .replace('\u{2028}', "\\u2028")
+                .replace('\u{2029}', "\\u2029");
+        }
         self.commands
             .as_ref()
             .ok_or_else(|| "the process has stopped".to_string())?

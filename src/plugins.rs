@@ -107,7 +107,35 @@ pub struct CommandContext {
     pub session: Option<PathBuf>,
 }
 
+/// A request from a plugin that the hub answers (`sessions.*`), see
+/// "Requests" in docs/PLUGINS.md.
+#[derive(Clone)]
+pub struct PluginRequest {
+    pub reply: PluginReply,
+    pub method: String,
+    pub params: Value,
+}
+
+/// Where the answer to a plugin request goes. Answer exactly once.
+#[derive(Clone)]
+pub struct PluginReply {
+    plugin_id: SharedString,
+    id: Value,
+}
+
+impl PluginReply {
+    pub fn finish(
+        self,
+        plugins: &Entity<PluginRegistry>,
+        result: Result<Value, String>,
+        cx: &mut gpui::App,
+    ) {
+        plugins.update(cx, |registry, _| registry.respond(self, result));
+    }
+}
+
 pub enum PluginEvent {
+    Request(PluginRequest),
     ComposerInsert {
         text: String,
         replace_last: bool,
@@ -131,6 +159,10 @@ struct Plugin {
     name: SharedString,
     dir: PathBuf,
     run: Vec<String>,
+    /// `"activation": "startup"`: started with the app, not on first use.
+    startup: bool,
+    /// `"permissions": ["sessions"]`: may read and drive pi sessions.
+    sessions: bool,
     state: PluginState,
     /// Messages for the plugin while its process is starting.
     pending: Vec<Value>,
@@ -152,6 +184,9 @@ pub struct PluginRegistry {
     /// pi extensions plugins ship (`contributes.piExtensions`), loaded into
     /// every pi this app starts.
     pi_extensions: Vec<PathBuf>,
+    /// `sessions.subscribe`: plugin id and the session handle it follows
+    /// (`None` for all sessions).
+    session_subscriptions: Vec<(SharedString, Option<String>)>,
     frames: Entity<ViewFrames>,
     _load_task: Task<()>,
 }
@@ -178,6 +213,7 @@ impl PluginRegistry {
             tool_events: Vec::new(),
             prompts: Vec::new(),
             pi_extensions: Vec::new(),
+            session_subscriptions: Vec::new(),
             frames: cx.new(|_| ViewFrames::default()),
             _load_task: load_task,
         }
@@ -232,6 +268,8 @@ impl PluginRegistry {
                 name: parsed.name,
                 dir: plugin_dir,
                 run: parsed.run,
+                startup: parsed.startup,
+                sessions: parsed.sessions,
                 state: PluginState::Stopped,
                 pending: Vec::new(),
                 _start_task: Task::ready(()),
@@ -239,6 +277,15 @@ impl PluginRegistry {
             });
         }
         cx.bind_keys(bindings);
+        let startup: Vec<SharedString> = self
+            .plugins
+            .iter()
+            .filter(|plugin| plugin.startup)
+            .map(|plugin| plugin.id.clone())
+            .collect();
+        for plugin_id in startup {
+            self.start(plugin_id, cx);
+        }
         eprintln!(
             "pi-gpui: loaded {} plugin(s): {}",
             self.plugins.len(),
@@ -461,6 +508,124 @@ impl PluginRegistry {
         );
     }
 
+    /// Answers a plugin request; dropped when the plugin is no longer running.
+    pub fn respond(&mut self, reply: PluginReply, result: Result<Value, String>) {
+        let Some(plugin) = self.plugin_mut(&reply.plugin_id) else {
+            return;
+        };
+        let PluginState::Running(process) = &plugin.state else {
+            return;
+        };
+        let message = match result {
+            Ok(result) => json!({ "id": reply.id, "result": result }),
+            Err(message) => json!({ "id": reply.id, "error": { "message": message } }),
+        };
+        process.send(message).ok();
+    }
+
+    /// Whether any plugin follows this session's events, so a chat clones
+    /// its records only when someone listens.
+    pub fn wants_session_events(&self, session: &str) -> bool {
+        self.session_subscriptions.iter().any(|(_, followed)| {
+            followed
+                .as_deref()
+                .is_none_or(|followed| followed == session)
+        })
+    }
+
+    fn session_followers(&self, session: &str) -> Vec<SharedString> {
+        let mut followers: Vec<SharedString> = Vec::new();
+        for (plugin_id, followed) in &self.session_subscriptions {
+            if followed
+                .as_deref()
+                .is_none_or(|followed| followed == session)
+                && !followers.contains(plugin_id)
+            {
+                followers.push(plugin_id.clone());
+            }
+        }
+        followers
+    }
+
+    /// pi records of one session, in order, for the plugins that follow it.
+    pub fn session_events(&mut self, session: &str, events: Vec<Value>, cx: &mut Context<Self>) {
+        if events.is_empty() {
+            return;
+        }
+        let message = json!({
+            "method": "session.events",
+            "params": { "session": session, "events": events },
+        });
+        for plugin_id in self.session_followers(session) {
+            self.send(&plugin_id, message.clone(), cx);
+        }
+    }
+
+    /// A session's summary changed (title, file, running) or it was opened.
+    pub fn session_state(&mut self, session: &str, info: Value, cx: &mut Context<Self>) {
+        let message = json!({ "method": "session.state", "params": { "session": info } });
+        for plugin_id in self.session_followers(session) {
+            self.send(&plugin_id, message.clone(), cx);
+        }
+    }
+
+    pub fn session_closed(&mut self, session: &str, cx: &mut Context<Self>) {
+        let message = json!({ "method": "session.closed", "params": { "session": session } });
+        for plugin_id in self.session_followers(session) {
+            self.send(&plugin_id, message.clone(), cx);
+        }
+    }
+
+    /// A message with an `id` is a request and always gets an answer.
+    fn apply_request(
+        &mut self,
+        plugin_id: &SharedString,
+        id: Value,
+        method: &str,
+        params: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        let reply = PluginReply {
+            plugin_id: plugin_id.clone(),
+            id,
+        };
+        if !method.starts_with("sessions.") {
+            self.respond(reply, Err(format!("unknown method {method}")));
+            return;
+        }
+        let allowed = self
+            .plugins
+            .iter()
+            .any(|plugin| plugin.id == *plugin_id && plugin.sessions);
+        if !allowed {
+            self.respond(
+                reply,
+                Err("sessions.* needs \"permissions\": [\"sessions\"] in plugin.json".into()),
+            );
+            return;
+        }
+        match method {
+            "sessions.subscribe" | "sessions.unsubscribe" => {
+                let session = params["session"]
+                    .as_str()
+                    .filter(|session| *session != "*")
+                    .map(str::to_string);
+                self.session_subscriptions
+                    .retain(|(owner, followed)| !(owner == plugin_id && *followed == session));
+                if method == "sessions.subscribe" {
+                    self.session_subscriptions
+                        .push((plugin_id.clone(), session));
+                }
+                self.respond(reply, Ok(json!({})));
+            }
+            _ => cx.emit(PluginEvent::Request(PluginRequest {
+                reply,
+                method: method.to_string(),
+                params: params.clone(),
+            })),
+        }
+    }
+
     fn apply_frame(&mut self, plugin_id: &SharedString, params: &Value, cx: &mut Context<Self>) {
         use base64::Engine as _;
         let Some(call_id) = params["callId"].as_str() else {
@@ -634,12 +799,24 @@ impl PluginRegistry {
         let mut changed = false;
         for message in messages {
             match message {
-                JsonlMessage::Record(record) => {
-                    changed |= !matches!(
-                        record["method"].as_str().unwrap_or_default(),
-                        "view.frame" | "log" | "notify" | "composer.insert" | "composer.setText"
-                    );
-                    self.apply_record(plugin_id, &record, cx);
+                JsonlMessage::Record(mut record) => {
+                    let method = record["method"].as_str().unwrap_or_default().to_string();
+                    match record.get_mut("id").map(Value::take) {
+                        Some(id) if !id.is_null() => {
+                            self.apply_request(plugin_id, id, &method, &record["params"], cx);
+                        }
+                        _ => {
+                            changed |= matches!(
+                                method.as_str(),
+                                "command.setState"
+                                    | "status.set"
+                                    | "status.clear"
+                                    | "prompt.input"
+                                    | "prompt.close"
+                            );
+                            self.apply_record(plugin_id, &record, cx);
+                        }
+                    }
                 }
                 JsonlMessage::Malformed(line) => {
                     eprintln!("pi-gpui: plugin {plugin_id} wrote non-JSON: {line}");
@@ -744,6 +921,8 @@ impl PluginRegistry {
         // Whatever the plugin showed belongs to the process that just ended.
         self.statuses.retain(|item| item.plugin_id != *plugin_id);
         self.prompts.retain(|prompt| prompt.plugin_id != *plugin_id);
+        self.session_subscriptions
+            .retain(|(owner, _)| owner != plugin_id);
         self.frames.update(cx, |frames, cx| {
             frames.live.remove(plugin_id);
             cx.notify();
@@ -858,6 +1037,8 @@ struct ParsedManifest {
     tool_views: Vec<ToolView>,
     tool_events: Vec<SharedString>,
     pi_extensions: Vec<PathBuf>,
+    startup: bool,
+    sessions: bool,
 }
 
 fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
@@ -968,8 +1149,23 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         pi_extensions.push(path);
     }
 
+    let startup = match manifest["activation"].as_str() {
+        None | Some("lazy") => false,
+        Some("startup") => true,
+        Some(other) => return Err(format!("activation: unknown value \"{other}\"")),
+    };
+    let sessions = manifest["permissions"]
+        .as_array()
+        .is_some_and(|permissions| {
+            permissions
+                .iter()
+                .any(|permission| permission == "sessions")
+        });
+
     Ok(ParsedManifest {
         name: SharedString::from(manifest["name"].as_str().unwrap_or(&id).to_string()),
+        startup,
+        sessions,
         id,
         run,
         commands,
@@ -1070,6 +1266,23 @@ mod tests {
                     "contributes": { "commands": [{ "id": "other.go" }] } }),
         );
         assert!(parse_manifest(&foreign_command).is_err());
+        assert!(!parsed.startup && !parsed.sessions);
+
+        let server = root.join("server");
+        write_manifest(
+            &server,
+            json!({ "id": "srv", "protocol": PROTOCOL_VERSION, "run": ["x"],
+                    "activation": "startup", "permissions": ["sessions"] }),
+        );
+        let parsed = parse_manifest(&server).expect("server manifest");
+        assert!(parsed.startup && parsed.sessions);
+
+        let bad_activation = root.join("bad-activation");
+        write_manifest(
+            &bad_activation,
+            json!({ "id": "x", "protocol": PROTOCOL_VERSION, "run": ["x"], "activation": "often" }),
+        );
+        assert!(parse_manifest(&bad_activation).is_err());
 
         fs::remove_dir_all(&root).ok();
     }

@@ -56,6 +56,8 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 - `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
 - `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
+- `activation`: `lazy` (default) starts the plugin on first use; `startup` starts it with the app, for plugins that serve something (a local server, a bridge).
+- `permissions`: `["sessions"]` lets the plugin list, open and drive pi sessions and follow their events (see Sessions). Without it `sessions.*` requests fail.
 
 ### Live views
 
@@ -73,7 +75,9 @@ The [Secrets plugin](../examples/plugins/secrets) is a complete example: a pi to
 
 ## Protocol 1
 
-Every message is a JSON object on a single line; lines end with `\n`. A message looks like `{"method": "...", "params": {...}}`. In version 1 all messages are notifications without a reply.
+Every message is a JSON object on a single line; lines end with `\n`. A message looks like `{"method": "...", "params": {...}}`. Most messages are notifications without a reply.
+
+A plugin message with an `id` is a request: the app always answers it with `{"id": ..., "result": {...}}` or `{"id": ..., "error": {"message": "..."}}`, also for unknown methods. Requests may be answered out of order.
 
 ### App → plugin
 
@@ -104,6 +108,35 @@ Every message is a JSON object on a single line; lines end with `\n`. A message 
 
 The app ignores unknown methods, so the protocol can grow without breaking older plugins.
 
+### Sessions
+
+With `"permissions": ["sessions"]` a plugin can drive pi sessions the way the user does: what it sends shows in the transcript, and the user sees the same session. An open session has a short id (`"1"`, `"2"`, …) that stays valid until the app quits.
+
+Requests:
+
+| Method | Params | Result |
+|---|---|---|
+| `sessions.list` | `limit?` (recent sessions per project, default 20) | `projects`: `[{path, name, sessions: [{file, title, modified, hidden, open}]}]` (`modified` in Unix ms, `open` the id when open); `open`: session summaries |
+| `sessions.open` | `workspace`, `file?`, `focus?` | the summary. Opens the session file, or a new session when `file` is absent; adds the project to the sidebar if needed. `focus` also shows it in the window |
+| `sessions.get` | `session` | the summary |
+| `sessions.focus` | `session` | the summary; the session is shown in the window |
+| `sessions.prompt` | `session`, `message`, `mode?` | pi's `prompt` response data (`disposition`). While pi works the message steers; `mode: "followUp"` queues it until the run ends |
+| `sessions.abort` | `session` | stops the run, like Esc |
+| `sessions.answer` | `session`, `question`, `answer?` / `confirmed?` / `cancel?` | answers the extension question pi waits on. `answer` is an option (or its 1-based number) or text |
+| `sessions.rpc` | `session`, `command` | pi's response data for a pi RPC command. Allowed: reads (`get_state`, `get_messages`, `get_session_stats`, `get_commands`, `get_available_models`, `get_tree`, …) and settings (`set_model`, `set_thinking_level`, `set_session_name`, `compact`, `bash`, `clear_queue`, …). Prompts, forks and session switches are not |
+| `sessions.subscribe` | `session` (an id or `"*"`) | starts the events below |
+| `sessions.unsubscribe` | `session` | stops them |
+
+A session summary is `{id, workspace, file, title, status, running, compacting, model, thinkingLevel, question, active}`. `status` is `ready`, `busy` or `stopped`; `question` is the extension question pi waits on (`{id, kind, title, message, options}`) or `null`; `active` means it is shown in the window.
+
+Events for subscribed sessions (app → plugin):
+
+| Method | Params | When |
+|---|---|---|
+| `session.events` | `session`, `events` | pi's own records of that session, in order: the [JSON event stream](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md) (`agent_start`, `message_update`, `tool_execution_end`, `agent_settled`, …) and `extension_ui_request`. Responses to commands are not included. `{"type": "process_exited"}` when pi stops |
+| `session.state` | `session` (a summary) | a session opened, or its title, file or running state changed |
+| `session.closed` | `session` (the id) | the session was closed (its project removed) |
+
 ### JavaScript example
 
 ```js
@@ -120,7 +153,7 @@ readline.createInterface({ input: process.stdin }).on("line", (line) => {
 });
 ```
 
-`readline` is fine for protocol 1: the app never writes the U+2028/U+2029 characters inside lines.
+`readline` is fine for protocol 1: the app never writes the U+2028/U+2029 characters inside lines (it escapes them).
 
 ## Performance
 

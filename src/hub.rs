@@ -19,7 +19,9 @@ use crate::chat::{ChatEvent, ChatStatus, ChatView, DetailsExpanded};
 use crate::pi::{self, Installation};
 use crate::pi_updates;
 use crate::platform;
-use crate::plugins::{CommandContext, PluginEvent, PluginRegistry, RunPluginCommand};
+use crate::plugins::{
+    CommandContext, PluginEvent, PluginRegistry, PluginReply, PluginRequest, RunPluginCommand,
+};
 use crate::sessions::{self, SessionSummary};
 use crate::settings::{self, Settings};
 use crate::text_input::TextInput;
@@ -445,6 +447,7 @@ impl HubView {
                 self.notice = Some((message.clone(), *color));
                 cx.notify();
             }
+            PluginEvent::Request(request) => self.handle_plugin_request(request.clone(), cx),
             PluginEvent::ComposerInsert { .. } | PluginEvent::ComposerSetText(_) => {
                 match &self.active_chat {
                     Some(chat) => chat.update(cx, |chat, cx| chat.apply_plugin_edit(event, cx)),
@@ -599,6 +602,11 @@ impl HubView {
         }
         // Dropping the chats closes their pi processes. Session files stay untouched.
         let removed = self.workspaces.remove(index);
+        for chat in &removed.chats {
+            let handle = chat.view.read(cx).handle().to_string();
+            self.plugins
+                .update(cx, |registry, cx| registry.session_closed(&handle, cx));
+        }
         if let Some(active) = &self.active_chat
             && removed.chats.iter().any(|chat| chat.view == *active)
         {
@@ -725,6 +733,17 @@ impl HubView {
     }
 
     fn start_chat(&mut self, workspace: &Path, session: Option<PathBuf>, cx: &mut Context<Self>) {
+        self.start_chat_with(workspace, session, true, cx);
+    }
+
+    /// Starts pi on a session; `activate` shows it in the main area.
+    fn start_chat_with(
+        &mut self,
+        workspace: &Path,
+        session: Option<PathBuf>,
+        activate: bool,
+        cx: &mut Context<Self>,
+    ) -> Option<Entity<ChatView>> {
         let installation = match &self.installation {
             InstallationState::Ready(installation) => installation.clone(),
             InstallationState::Checking => {
@@ -733,7 +752,7 @@ impl HubView {
                     Color::Warning,
                 ));
                 cx.notify();
-                return;
+                return None;
             }
             InstallationState::Failed(_) => {
                 self.notice = Some((
@@ -741,22 +760,250 @@ impl HubView {
                     Color::Warning,
                 ));
                 cx.notify();
-                return;
+                return None;
             }
         };
         let workspace_path = workspace.to_path_buf();
         let plugins = self.plugins.clone();
         let view = cx.new(|cx| ChatView::new(workspace_path, session, installation, plugins, cx));
         let subscription = cx.subscribe(&view, Self::on_chat_event);
-        let Some(entry) = self.entry_mut(workspace) else {
-            return;
-        };
+        let entry = self.entry_mut(workspace)?;
         entry.expanded = true;
         entry.chats.push(OpenChat {
             view: view.clone(),
             _subscription: subscription,
         });
-        self.activate(view, cx);
+        self.report_session_state(&view, cx);
+        if activate {
+            self.activate(view.clone(), cx);
+        } else {
+            cx.notify();
+        }
+        Some(view)
+    }
+
+    /// Tells plugins that follow this session about its new summary.
+    fn report_session_state(&mut self, chat: &Entity<ChatView>, cx: &mut Context<Self>) {
+        let handle = chat.read(cx).handle().to_string();
+        if !self.plugins.read(cx).wants_session_events(&handle) {
+            return;
+        }
+        let info = self.session_info(chat, cx);
+        self.plugins
+            .update(cx, |registry, cx| registry.session_state(&handle, info, cx));
+    }
+
+    fn session_info(&self, chat: &Entity<ChatView>, cx: &App) -> Value {
+        let mut info = chat.read(cx).info();
+        info["active"] = json!(self.active_chat.as_ref() == Some(chat));
+        info
+    }
+
+    fn chat_by_handle(&self, handle: &str, cx: &App) -> Option<Entity<ChatView>> {
+        self.workspaces
+            .iter()
+            .flat_map(|entry| entry.chats.iter())
+            .find(|chat| chat.view.read(cx).handle() == handle)
+            .map(|chat| chat.view.clone())
+    }
+
+    /// `sessions.*` requests from plugins with the `sessions` permission.
+    fn handle_plugin_request(&mut self, request: PluginRequest, cx: &mut Context<Self>) {
+        let PluginRequest {
+            reply,
+            method,
+            params,
+        } = request;
+        let plugins = self.plugins.clone();
+        match method.as_str() {
+            "sessions.list" => self.list_sessions_for_plugin(&params, reply, cx),
+            "sessions.open" => self.open_session_for_plugin(&params, reply, cx),
+            _ => {
+                let handle = params["session"].as_str().unwrap_or_default();
+                let Some(chat) = self.chat_by_handle(handle, cx) else {
+                    let error = format!("no open session \"{handle}\"; see sessions.list");
+                    reply.finish(&plugins, Err(error), cx);
+                    return;
+                };
+                match method.as_str() {
+                    "sessions.get" => {
+                        let info = self.session_info(&chat, cx);
+                        reply.finish(&plugins, Ok(info), cx);
+                    }
+                    "sessions.focus" => {
+                        self.activate(chat.clone(), cx);
+                        let info = self.session_info(&chat, cx);
+                        reply.finish(&plugins, Ok(info), cx);
+                    }
+                    "sessions.prompt" => {
+                        chat.update(cx, |chat, cx| chat.plugin_prompt(&params, reply, cx))
+                    }
+                    "sessions.abort" => chat.update(cx, |chat, cx| chat.plugin_abort(reply, cx)),
+                    "sessions.answer" => {
+                        chat.update(cx, |chat, cx| chat.plugin_answer(&params, reply, cx))
+                    }
+                    "sessions.rpc" => {
+                        chat.update(cx, |chat, cx| chat.plugin_rpc(&params, reply, cx))
+                    }
+                    _ => reply.finish(&plugins, Err(format!("unknown method {method}")), cx),
+                }
+            }
+        }
+    }
+
+    /// Projects in the sidebar with their recent sessions, and the open ones.
+    fn list_sessions_for_plugin(
+        &mut self,
+        params: &Value,
+        reply: PluginReply,
+        cx: &mut Context<Self>,
+    ) {
+        let limit = params["limit"].as_u64().unwrap_or(20).clamp(1, 200) as usize;
+        let projects: Vec<PathBuf> = self
+            .workspaces
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        let listing = cx.background_spawn(async move {
+            projects
+                .into_iter()
+                .map(|path| {
+                    let sessions = sessions::list_sessions(&path, limit);
+                    (path, sessions)
+                })
+                .collect::<Vec<_>>()
+        });
+        cx.spawn(async move |this, cx| {
+            let listed = listing.await;
+            this.update(cx, |this, cx| {
+                let open: Vec<Entity<ChatView>> = this
+                    .workspaces
+                    .iter()
+                    .flat_map(|entry| entry.chats.iter().map(|chat| chat.view.clone()))
+                    .collect();
+                let projects: Vec<Value> = listed
+                    .iter()
+                    .map(|(path, summaries)| {
+                        let name = this
+                            .workspaces
+                            .iter()
+                            .find(|entry| entry.path == *path)
+                            .map(|entry| entry.name.to_string());
+                        let sessions: Vec<Value> = summaries
+                            .iter()
+                            .map(|summary| {
+                                let handle = open
+                                    .iter()
+                                    .find(|chat| {
+                                        chat.read(cx).session_file() == Some(summary.path.as_path())
+                                    })
+                                    .map(|chat| chat.read(cx).handle().to_string());
+                                json!({
+                                    "file": summary.path,
+                                    "title": summary.title,
+                                    "modified": summary
+                                        .modified
+                                        .duration_since(std::time::UNIX_EPOCH)
+                                        .map(|age| age.as_millis() as u64)
+                                        .unwrap_or_default(),
+                                    "hidden": this.hidden_sessions.contains(&summary.path),
+                                    "open": handle,
+                                })
+                            })
+                            .collect();
+                        json!({ "path": path, "name": name, "sessions": sessions })
+                    })
+                    .collect();
+                let open: Vec<Value> = open
+                    .iter()
+                    .map(|chat| this.session_info(chat, cx))
+                    .collect();
+                let result = json!({ "projects": projects, "open": open });
+                reply.finish(&this.plugins, Ok(result), cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// Opens a session file (or a new session when `file` is absent) in a
+    /// project, adding the project to the sidebar if needed.
+    fn open_session_for_plugin(
+        &mut self,
+        params: &Value,
+        reply: PluginReply,
+        cx: &mut Context<Self>,
+    ) {
+        let plugins = self.plugins.clone();
+        let focus = params["focus"].as_bool().unwrap_or(false);
+        let file = params["file"]
+            .as_str()
+            .filter(|file| !file.is_empty())
+            .map(PathBuf::from);
+        if let Some(file) = &file
+            && let Some(chat) = self
+                .workspaces
+                .iter()
+                .flat_map(|entry| entry.chats.iter())
+                .find(|chat| chat.view.read(cx).session_file() == Some(file.as_path()))
+                .map(|chat| chat.view.clone())
+        {
+            if focus {
+                self.activate(chat.clone(), cx);
+            }
+            let info = self.session_info(&chat, cx);
+            reply.finish(&plugins, Ok(info), cx);
+            return;
+        }
+        let Some(workspace) = params["workspace"]
+            .as_str()
+            .map(PathBuf::from)
+            .and_then(|path| path.canonicalize().ok())
+            .filter(|path| path.is_dir())
+        else {
+            reply.finish(
+                &plugins,
+                Err("workspace: give the path of an existing project folder".into()),
+                cx,
+            );
+            return;
+        };
+        if self.entry_mut(&workspace).is_none() {
+            self.add_workspace(workspace.clone(), cx);
+            self.save(cx);
+        }
+        let Some(file) = file else {
+            let result = self
+                .start_chat_with(&workspace, None, focus, cx)
+                .map(|chat| self.session_info(&chat, cx))
+                .ok_or_else(|| "pi is not ready yet".to_string());
+            reply.finish(&plugins, result, cx);
+            return;
+        };
+        if !file.is_file() {
+            let error = format!("no session file {}", file.display());
+            reply.finish(&plugins, Err(error), cx);
+            return;
+        }
+        let lease = cx.background_spawn({
+            let file = file.clone();
+            async move { sessions::foreign_lease_holder(&file) }
+        });
+        cx.spawn(async move |this, cx| {
+            let holder = lease.await;
+            this.update(cx, |this, cx| {
+                let result = match holder {
+                    Some(holder) => Err(format!("the session is open in {holder}")),
+                    None => this
+                        .start_chat_with(&workspace, Some(file), focus, cx)
+                        .map(|chat| this.session_info(&chat, cx))
+                        .ok_or_else(|| "pi is not ready yet".to_string()),
+                };
+                reply.finish(&plugins, result, cx);
+            })
+            .ok();
+        })
+        .detach();
     }
 
     fn activate(&mut self, view: Entity<ChatView>, cx: &mut Context<Self>) {
@@ -769,7 +1016,10 @@ impl HubView {
 
     fn on_chat_event(&mut self, chat: Entity<ChatView>, event: &ChatEvent, cx: &mut Context<Self>) {
         match event {
-            ChatEvent::Changed => cx.notify(),
+            ChatEvent::Changed => {
+                self.report_session_state(&chat, cx);
+                cx.notify();
+            }
             ChatEvent::NewSession => {
                 let workspace = chat.read(cx).workspace().to_path_buf();
                 self.start_chat(&workspace, None, cx);

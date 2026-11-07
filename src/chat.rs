@@ -4,6 +4,7 @@ mod dialog;
 mod overlays;
 mod plugin_prompt;
 mod plugin_view;
+mod remote;
 mod slash;
 mod tree;
 mod usage;
@@ -301,6 +302,10 @@ enum Forking {
 }
 
 pub struct ChatView {
+    /// How plugins name this open session (`sessions.*`).
+    handle: String,
+    /// pi commands sent for plugins, by request id.
+    plugin_calls: HashMap<String, remote::PluginCall>,
     workspace: PathBuf,
     session_file: Option<PathBuf>,
     session_name: Option<String>,
@@ -441,6 +446,8 @@ impl ChatView {
             cx.new(|_| TextSelection::new(focus_handle.clone()).with_link_base(link_base));
         let selection_subscription = cx.observe(&selection, |_, _, cx| cx.notify());
         let mut this = Self {
+            handle: remote::next_handle(),
+            plugin_calls: HashMap::new(),
             workspace,
             session_file,
             session_name: None,
@@ -522,7 +529,7 @@ impl ChatView {
                 self.composer
                     .update(cx, |composer, cx| composer.set_text(text, cx));
             }
-            PluginEvent::Notify { .. } => {}
+            PluginEvent::Notify { .. } | PluginEvent::Request(_) => {}
         }
     }
 
@@ -719,6 +726,7 @@ impl ChatView {
         let summary_before = (self.is_running(), self.title(), self.session_file.clone());
         let mut changed = Vec::new();
         let mut settled = false;
+        self.forward_to_plugins(&batch, cx);
         for message in batch {
             match message {
                 JsonlMessage::Record(record) => {
@@ -925,6 +933,9 @@ impl ChatView {
     }
 
     fn apply_response(&mut self, record: &Value, cx: &mut Context<Self>) {
+        if self.finish_plugin_call(record, cx) {
+            return;
+        }
         let command = record["command"].as_str().unwrap_or("?");
         // Only "started" leads to agent_start; anything else ends the wait here.
         if command == "prompt" && record["data"]["disposition"] != "started" {
@@ -1922,6 +1933,7 @@ impl ChatView {
         self.finish_streaming(changed);
         self.close_dialog(dialog::DialogState::Closed, changed, cx);
         self.queued_dialog_answer = None;
+        self.fail_plugin_calls(cx);
         let status =
             status.map_or_else(|| "unknown status".to_string(), |status| status.to_string());
         let mut text = format!("pi exited ({status}).");
