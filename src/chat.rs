@@ -3273,9 +3273,8 @@ fn thumbnails(row: usize, images: &[Picture], colors: &crate::ui::ThemeColors) -
                 .border_color(colors.border_variant)
                 .overflow_hidden()
                 .when_some(path, |this, path| {
-                    this.cursor_pointer().on_click(move |_, _, cx| {
-                        cx.open_with_system(&path)
-                    })
+                    this.cursor_pointer()
+                        .on_click(move |_, _, cx| cx.open_with_system(&path))
                 })
                 .child(
                     gpui::img(picture.source())

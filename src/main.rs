@@ -160,6 +160,7 @@ fn app_menus() -> Vec<Menu> {
             name: "File".into(),
             items: vec![
                 MenuItem::action("New Session", hub::NewChat),
+                MenuItem::action("Close Session", hub::CloseChat),
                 MenuItem::action("Add Project…", hub::AddWorkspace),
             ],
         },

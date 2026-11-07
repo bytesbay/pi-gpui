@@ -32,6 +32,7 @@ actions!(
     [
         AddWorkspace,
         NewChat,
+        CloseChat,
         ToggleDetails,
         CancelRename,
         OpenSettings,
@@ -63,6 +64,7 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("cmd-o", AddWorkspace, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-n", NewChat, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-w", CloseChat, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-shift-e", ToggleDetails, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", CancelRename, Some(RENAME_CONTEXT)),
         KeyBinding::new("cmd-,", OpenSettings, Some(KEY_CONTEXT)),
@@ -1251,10 +1253,26 @@ impl HubView {
                 this.toggle_hidden(file.clone(), cx);
             }))
         });
+        let close_button = row.open_chat.clone().map(|view| {
+            IconButton::new(
+                ElementId::Name(format!("session-close:{}", row.id).into()),
+                IconName::Close,
+            )
+            .size(ButtonSize::Compact)
+            .icon_size(IconSize::XSmall)
+            .tooltip(Tooltip::with_optional_keys(
+                "Close session",
+                is_active.then(|| "⌘W".into()),
+            ))
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.confirm_close(view.clone(), window, cx);
+            }))
+        });
         let hover_buttons = h_flex()
             .gap(px(2.))
             .children(hide_button)
-            .child(menu_button);
+            .child(menu_button)
+            .children(close_button);
 
         let item = ListItem::new(row.id.clone())
             .indent_level(1)
@@ -1346,6 +1364,19 @@ impl HubView {
                 }
             }
         }));
+        let close = row.open_chat.clone().map(|view| {
+            item(
+                "menu-close",
+                IconName::Close,
+                "Close session",
+                Color::Default,
+                true,
+            )
+            .on_click(cx.listener(move |this, _, window, cx| {
+                this.session_menu = None;
+                this.confirm_close(view.clone(), window, cx);
+            }))
+        });
         let delete = item(
             "menu-delete",
             IconName::Trash,
@@ -1379,6 +1410,7 @@ impl HubView {
                     }))
                     .child(rename)
                     .child(hide)
+                    .children(close)
                     .child(div().my(px(4.)).h(px(1.)).bg(colors.border_variant))
                     .child(delete),
             ),
@@ -1472,6 +1504,76 @@ impl HubView {
             self.hidden_sessions.insert(file);
         }
         self.save(cx);
+        cx.notify();
+    }
+
+    /// ⌘W: closes the session on screen.
+    fn close_active_chat(&mut self, _: &CloseChat, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(view) = self.active_chat.clone() {
+            self.confirm_close(view, window, cx);
+        }
+    }
+
+    /// Closes an open session, asking first while pi is working in it.
+    fn confirm_close(
+        &mut self,
+        view: Entity<ChatView>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        if !view.read(cx).is_running() {
+            self.close_chat(&view, cx);
+            return;
+        }
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &format!("Close \"{}\"?", sessions::one_line(&view.read(cx).title(), 60)),
+            Some("pi is still working in this session. Closing it stops the run. The session itself is kept."),
+            &["Close", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await.ok() != Some(0) {
+                return;
+            }
+            this.update(cx, |this, cx| this.close_chat(&view, cx)).ok();
+        })
+        .detach();
+    }
+
+    /// Stops the session's pi (dropping the chat closes its stdin) and keeps
+    /// the session file, so it can be opened again from the sidebar.
+    fn close_chat(&mut self, view: &Entity<ChatView>, cx: &mut Context<Self>) {
+        let Some(index) = self
+            .workspaces
+            .iter()
+            .position(|entry| entry.chats.iter().any(|chat| &chat.view == view))
+        else {
+            return;
+        };
+        let entry = &mut self.workspaces[index];
+        let position = entry.chats.iter().position(|chat| &chat.view == view);
+        entry.chats.retain(|chat| &chat.view != view);
+        let workspace = entry.path.clone();
+        if self.active_chat.as_ref() == Some(view) {
+            // The neighbour in the same project takes its place, if any.
+            let next = position.and_then(|position| {
+                let chats = &self.workspaces[index].chats;
+                chats
+                    .get(position)
+                    .or_else(|| chats.last())
+                    .map(|chat| chat.view.clone())
+            });
+            match next {
+                Some(next) => self.activate(next, cx),
+                None => {
+                    self.active_chat = None;
+                    self.focus_active_chat = true;
+                }
+            }
+        }
+        // A session started here may have just been written; list it.
+        self.load_sessions(&workspace, cx);
         cx.notify();
     }
 
@@ -2845,6 +2947,7 @@ impl Render for HubView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::prompt_add_workspace))
             .on_action(cx.listener(Self::new_chat))
+            .on_action(cx.listener(Self::close_active_chat))
             .on_action(cx.listener(Self::run_plugin_command))
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::select_session))

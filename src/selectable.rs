@@ -548,14 +548,18 @@ impl Element for SelectableText {
 /// system's default app.
 pub fn open_link(link: &str, base: Option<&Path>, cx: &App) {
     let link = link.trim();
-    let scheme = link.split_once(':').map(|(scheme, _)| scheme.to_ascii_lowercase());
+    let scheme = link
+        .split_once(':')
+        .map(|(scheme, _)| scheme.to_ascii_lowercase());
     match scheme.as_deref() {
         Some("http" | "https" | "mailto") => return cx.open_url(link),
         Some("file") => {}
         // Other schemes (`vscode:`, `zed:`...) but not Windows-like `C:` or `src/a.rs:12`.
         Some(scheme)
             if scheme.len() > 1
-                && scheme.chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+                && scheme
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
                 && !link.contains(' ')
                 && link[scheme.len() + 1..].starts_with("//") =>
         {
@@ -629,12 +633,24 @@ mod link_tests {
         let file = root.join("docs/my cv.pdf");
         std::fs::write(&file, b"x").expect("file");
 
-        assert_eq!(resolve_file_link("docs/my cv.pdf", Some(&root)), Some(file.clone()));
-        assert_eq!(resolve_file_link("docs/my%20cv.pdf", Some(&root)), Some(file.clone()));
+        assert_eq!(
+            resolve_file_link("docs/my cv.pdf", Some(&root)),
+            Some(file.clone())
+        );
+        assert_eq!(
+            resolve_file_link("docs/my%20cv.pdf", Some(&root)),
+            Some(file.clone())
+        );
         let absolute = format!("file://{}", file.display()).replace(' ', "%20");
         assert_eq!(resolve_file_link(&absolute, None), Some(file.clone()));
-        assert_eq!(resolve_file_link(&format!("{}:12", file.display()), None), Some(file.clone()));
-        assert_eq!(resolve_file_link("docs/my cv.pdf#page=2", Some(&root)), Some(file));
+        assert_eq!(
+            resolve_file_link(&format!("{}:12", file.display()), None),
+            Some(file.clone())
+        );
+        assert_eq!(
+            resolve_file_link("docs/my cv.pdf#page=2", Some(&root)),
+            Some(file)
+        );
         assert_eq!(resolve_file_link("docs/missing.pdf", Some(&root)), None);
 
         std::fs::remove_dir_all(&root).ok();
