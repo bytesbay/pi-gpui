@@ -4,6 +4,7 @@ mod highlight;
 mod hub;
 mod jsonl;
 mod markdown;
+mod open_url;
 mod pi;
 mod pi_updates;
 mod platform;
@@ -16,6 +17,8 @@ mod ui;
 mod updater;
 
 use std::path::PathBuf;
+
+use futures::StreamExt;
 
 use gpui::{
     App, Application, Bounds, Focusable, KeyBinding, Menu, MenuItem, OsAction, SystemMenuType,
@@ -55,69 +58,90 @@ fn main() {
                 }
             });
 
-    Application::new()
-        .with_assets(Assets)
-        .run(move |cx: &mut App| {
-            settings::init(cx);
-            text_input::bind_keys(cx);
-            chat::bind_keys(cx);
-            hub::bind_keys(cx);
-            cx.bind_keys([
-                KeyBinding::new("cmd-q", Quit, None),
-                KeyBinding::new("cmd-h", Hide, None),
-                KeyBinding::new("alt-cmd-h", HideOthers, None),
-            ]);
-            cx.on_action(|_: &Hide, cx| cx.hide());
-            cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
-            cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
-            cx.on_action(|_: &About, cx| {
-                cx.open_url("https://github.com/bytesbay/pi-gpui");
-            });
-            cx.on_action(|_: &Quit, cx| cx.quit());
-            updater::AutoUpdater::init(cx);
-            highlight::preload();
-            cx.on_action(|_: &CheckForUpdates, cx| {
-                updater::AutoUpdater::global(cx).update(cx, |updater, cx| updater.check(true, cx));
-            });
-            cx.set_menus(app_menus());
-            cx.on_window_closed(|cx| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
-
-            let bounds = Bounds::centered(None, size(px(1180.), px(800.)), cx);
-            let options = WindowOptions {
-                window_bounds: Some(WindowBounds::Windowed(bounds)),
-                // Draw our own title bar; macOS keeps the traffic lights.
-                titlebar: Some(TitlebarOptions {
-                    title: Some("Pi GPUI".into()),
-                    appears_transparent: true,
-                    traffic_light_position: Some(point(px(12.), px(11.))),
-                }),
-                ..Default::default()
-            };
-
-            let window = match cx.open_window(options, |window, cx| {
-                cx.new(|cx| HubView::new(initial_workspace.clone(), window, cx))
-            }) {
-                Ok(window) => window,
-                Err(error) => {
-                    eprintln!("pi-gpui: failed to open a window: {error:#}");
-                    cx.quit();
-                    return;
-                }
-            };
-
-            let focused = window.update(cx, |view, window, cx| {
-                window.focus(&view.focus_handle(cx));
-                cx.activate(true);
-            });
-            if let Err(error) = focused {
-                eprintln!("pi-gpui: failed to focus the window: {error:#}");
-            }
+    // pi-gpui:// links (Info.plist registers the scheme). macOS can deliver
+    // them before the window exists, so they wait in a channel.
+    let (url_sender, mut url_receiver) = futures::channel::mpsc::unbounded::<Vec<String>>();
+    let app = Application::new().with_assets(Assets);
+    app.on_open_urls(move |urls| {
+        url_sender.unbounded_send(urls).ok();
+    });
+    app.run(move |cx: &mut App| {
+        settings::init(cx);
+        text_input::bind_keys(cx);
+        chat::bind_keys(cx);
+        hub::bind_keys(cx);
+        cx.bind_keys([
+            KeyBinding::new("cmd-q", Quit, None),
+            KeyBinding::new("cmd-h", Hide, None),
+            KeyBinding::new("alt-cmd-h", HideOthers, None),
+        ]);
+        cx.on_action(|_: &Hide, cx| cx.hide());
+        cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
+        cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+        cx.on_action(|_: &About, cx| {
+            cx.open_url("https://github.com/bytesbay/pi-gpui");
         });
+        cx.on_action(|_: &Quit, cx| cx.quit());
+        updater::AutoUpdater::init(cx);
+        highlight::preload();
+        cx.on_action(|_: &CheckForUpdates, cx| {
+            updater::AutoUpdater::global(cx).update(cx, |updater, cx| updater.check(true, cx));
+        });
+        cx.set_menus(app_menus());
+        cx.on_window_closed(|cx| {
+            if cx.windows().is_empty() {
+                cx.quit();
+            }
+        })
+        .detach();
+
+        let bounds = Bounds::centered(None, size(px(1180.), px(800.)), cx);
+        let options = WindowOptions {
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            // Draw our own title bar; macOS keeps the traffic lights.
+            titlebar: Some(TitlebarOptions {
+                title: Some("Pi GPUI".into()),
+                appears_transparent: true,
+                traffic_light_position: Some(point(px(12.), px(11.))),
+            }),
+            ..Default::default()
+        };
+
+        let window = match cx.open_window(options, |window, cx| {
+            cx.new(|cx| HubView::new(initial_workspace.clone(), window, cx))
+        }) {
+            Ok(window) => window,
+            Err(error) => {
+                eprintln!("pi-gpui: failed to open a window: {error:#}");
+                cx.quit();
+                return;
+            }
+        };
+
+        let focused = window.update(cx, |view, window, cx| {
+            window.focus(&view.focus_handle(cx));
+            cx.activate(true);
+        });
+        if let Err(error) = focused {
+            eprintln!("pi-gpui: failed to focus the window: {error:#}");
+        }
+
+        cx.spawn(async move |cx| {
+            while let Some(urls) = url_receiver.next().await {
+                let opened = window.update(cx, |view, window, cx| {
+                    for url in &urls {
+                        view.open_url(url, cx);
+                    }
+                    window.activate_window();
+                });
+                if opened.is_err() {
+                    break;
+                }
+                cx.update(|cx| cx.activate(true)).ok();
+            }
+        })
+        .detach();
+    });
 }
 
 /// The app was called "Pi GPU UI" before; keep its projects and settings.

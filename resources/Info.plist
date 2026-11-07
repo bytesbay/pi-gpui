@@ -22,6 +22,18 @@
 	<string>13.0</string>
 	<key>NSHighResolutionCapable</key>
 	<true/>
+	<!-- pi-gpui://open?workspace=...&session=... (src/open_url.rs), used by `/gpui` in pi. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.pi-gpui.app</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>pi-gpui</string>
+			</array>
+		</dict>
+	</array>
 	<!-- macOS checks these in the app that launched a plugin, not in the plugin itself. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>A plugin wants to use the microphone, for example to dictate a message.</string>

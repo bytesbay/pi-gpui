@@ -223,8 +223,9 @@ pub struct HubView {
     /// Session whose lease check is in flight; its row shows a spinner.
     opening_session: Option<PathBuf>,
     state_path: Option<PathBuf>,
-    /// Workspace from the command line: open a new chat once pi is verified.
-    pending_new_chat: Option<PathBuf>,
+    /// Workspace from the command line or an open link, and the session to
+    /// open in it (a new one when absent), started once pi is verified.
+    pending_open: Option<(PathBuf, Option<PathBuf>)>,
     focus_active_chat: bool,
     /// Mouse went down in the title bar; the next move starts a window drag.
     title_bar_drag_pending: bool,
@@ -331,7 +332,7 @@ impl HubView {
             notice: None,
             opening_session: None,
             state_path,
-            pending_new_chat: None,
+            pending_open: None,
             focus_active_chat: false,
             title_bar_drag_pending: false,
             hidden_sessions: HashSet::new(),
@@ -374,7 +375,7 @@ impl HubView {
             .unwrap_or_default();
         if let Some(path) = initial_workspace {
             this.add_workspace(path.clone(), cx);
-            this.pending_new_chat = Some(path);
+            this.pending_open = Some((path, None));
             this.save(cx);
         }
         let expanded: Vec<PathBuf> = this
@@ -503,8 +504,10 @@ impl HubView {
                             .update(cx, |updater, _| updater.set_pi_version(version));
                         this.installation = InstallationState::Ready(installation);
                         this.check_pi_updates(cx);
-                        if let Some(path) = this.pending_new_chat.take() {
-                            this.start_chat(&path, None, cx);
+                        match this.pending_open.take() {
+                            Some((path, Some(session))) => this.open_session(&path, session, cx),
+                            Some((path, None)) => this.start_chat(&path, None, cx),
+                            None => {}
                         }
                     }
                     Err(error) => {
@@ -523,6 +526,39 @@ impl HubView {
         self.workspaces
             .iter_mut()
             .find(|entry| entry.path == workspace)
+    }
+
+    /// Handles a `pi-gpui://open` link (see `open_url.rs`): adds the project
+    /// and opens the session, or a new one when the link names none.
+    pub fn open_url(&mut self, url: &str, cx: &mut Context<Self>) {
+        let request = crate::open_url::parse(url);
+        let Some(workspace) = request
+            .as_ref()
+            .and_then(|request| PathBuf::from(&request.workspace).canonicalize().ok())
+            .filter(|path| path.is_dir())
+        else {
+            self.notice = Some((
+                format!("Cannot open {url}: no such project folder."),
+                Color::Warning,
+            ));
+            cx.notify();
+            return;
+        };
+        let session = request
+            .and_then(|request| request.session)
+            .map(PathBuf::from)
+            .filter(|path| path.is_file());
+        self.add_workspace(workspace.clone(), cx);
+        self.save(cx);
+        if matches!(self.installation, InstallationState::Checking) {
+            self.pending_open = Some((workspace, session));
+            cx.notify();
+            return;
+        }
+        match session {
+            Some(session) => self.open_session(&workspace, session, cx),
+            None => self.start_chat(&workspace, None, cx),
+        }
     }
 
     fn add_workspace(&mut self, path: PathBuf, cx: &mut Context<Self>) {
