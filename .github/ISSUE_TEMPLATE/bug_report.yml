@@ -1,0 +1,36 @@
+name: Bug report
+description: Something in Pi GPUI does not work
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what you got. Screenshots help.
+    validations:
+      required: true
+  - type: input
+    id: app
+    attributes:
+      label: Pi GPUI version
+      placeholder: "0.1.10 (Pi GPUI menu > About)"
+    validations:
+      required: true
+  - type: input
+    id: pi
+    attributes:
+      label: pi version
+      placeholder: "pi --version"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version
+      placeholder: "15.4"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: "Run the app from a terminal to see its output: `/Applications/Pi\\ GPUI.app/Contents/MacOS/pi-gpui`"
+      render: text

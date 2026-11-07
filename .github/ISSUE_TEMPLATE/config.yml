@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Problems with pi itself
+    url: https://github.com/earendil-works/pi/issues
+    about: Model, provider and extension issues that also happen in pi's terminal belong there.

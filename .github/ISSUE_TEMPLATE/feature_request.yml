@@ -1,0 +1,16 @@
+name: Feature request
+description: Something Pi GPUI should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What you want to do
+      description: The task you are trying to get done, and what gets in the way now.
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: How it could work
+      description: Optional. If pi's terminal already does this, say how.
