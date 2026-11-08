@@ -314,7 +314,7 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
 
 /* The hero recording has the window's own border and rounded corners;
    the radius matches macOS window corners (about 17pt of 1360). */
-.frame-window { border: 0; border-radius: 1.25% / 1.98%; background: var(--bg); }
+.frame-window { border: 1px solid var(--line-2); border-radius: 1.53% / 2.25%; background: var(--bg); }
 
 /* Can it run DOOM? */
 /* Text and recording side by side in one card. */
