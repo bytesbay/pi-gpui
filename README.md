@@ -34,6 +34,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 
 - Projects and their pi sessions in a sidebar. Every open session runs its own pi, so switching never stops work.
 - Slash commands: pi's extension commands, prompt templates and skills, plus `/compact`, `/tree`, `/fork`, `/clone`, `/model`, `/new`, `/name`, `/session`, `/copy`, `/export`.
+- Side panels like Zed's docks: projects on the left; the project's files (colored by git status) and its git changes in a floating panel on the right. Right-click a panel's tab to move it to the other side; drag a panel's edge to resize it.
 - Session tree with keyboard navigation and branch summaries.
 - Paste or drop files and images into the message field. They show up as chips in the text (hover an image to preview it) and are sent as paths, like in pi's terminal: a pasted image is saved to `$TMPDIR/pi-clipboard-*.png`, a file gets a temporary link. Images in messages and tool results are shown in the transcript.
 - Fork from any message.
@@ -55,6 +56,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 | `⌘,` | Settings |
 | `⌘O` | Add project |
 | `⌘1` … `⌘9` | Open the n-th session (hold `⌘` to see numbers) |
+| `⌘B` / `⌘R` | Show or hide the left / right panel |
 | `⌘⇧T` | Session tree |
 | `⌘⇧M` | Model and thinking level |
 | `⌘⇧E` | Expand or collapse step details |

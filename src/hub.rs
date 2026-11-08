@@ -1,4 +1,5 @@
-//! Root view: a sidebar of workspaces and their pi sessions, and the active chat.
+//! Root view: side panels (projects and sessions, files, changes)
+//! around the active chat.
 //!
 //! Every opened session owns its own pi process. Switching between them never
 //! stops work; closing the app closes stdin of each process.
@@ -16,6 +17,9 @@ use gpui::{
 use serde_json::{Value, json};
 
 use crate::chat::{ChatEvent, ChatStatus, ChatView, DetailsExpanded};
+use crate::diff::DiffPanel;
+use crate::dock::{DockSide, Docks, PanelKind};
+use crate::file_tree::{FilesEvent, FilesPanel};
 use crate::pi::{self, Installation};
 use crate::pi_updates;
 use crate::platform;
@@ -40,7 +44,11 @@ actions!(
         OpenSettings,
         Minimize,
         Zoom,
-        ToggleFullScreen
+        ToggleFullScreen,
+        ToggleLeftDock,
+        ToggleRightDock,
+        ToggleFiles,
+        ToggleChanges
     ]
 );
 
@@ -54,7 +62,8 @@ pub struct SelectSession {
 const KEY_CONTEXT: &str = "Hub";
 const RENAME_CONTEXT: &str = "SessionRename";
 const SETTINGS_FIELD_CONTEXT: &str = "SettingsField";
-const SIDEBAR_WIDTH: f32 = 272.;
+/// Space around the floating right panel.
+const FLOATING_DOCK_MARGIN: f32 = 8.;
 const SESSIONS_PER_WORKSPACE: usize = 20;
 /// Our own title bar replaces the native one (see `main.rs`). The traffic
 /// lights are placed at (12, 11) so they sit centered in this height.
@@ -72,6 +81,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-,", OpenSettings, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-m", Minimize, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-b", ToggleLeftDock, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-r", ToggleRightDock, Some(KEY_CONTEXT)),
     ]);
     cx.bind_keys((1..=9).map(|index| {
         KeyBinding::new(
@@ -241,6 +252,16 @@ pub struct HubView {
     command_held: bool,
     /// The Settings page replaces the main area while open.
     settings_page: Option<SettingsPage>,
+    docks: Docks,
+    diff_panel: Entity<DiffPanel>,
+    files_panel: Entity<FilesPanel>,
+    /// Right-click menu of a side panel.
+    panel_menu: Option<PanelMenu>,
+    /// A dock edge is being dragged.
+    resizing_dock: Option<DockSide>,
+    /// The chat the panels last followed; they catch up in the next render.
+    panels_follow: Option<gpui::EntityId>,
+
     /// Available pi and extension updates (applied only on request).
     pi_updates: pi_updates::Updates,
     update_popover: Option<UpdatePopover>,
@@ -325,6 +346,33 @@ impl HubView {
                 cx.notify();
             }),
         ];
+        let docks = state_path.as_deref().map(load_docks).unwrap_or_default();
+        let diff_panel = cx.new(|_| DiffPanel::new());
+        let files_panel = cx.new(FilesPanel::new);
+        cx.subscribe(
+            &files_panel,
+            |this: &mut Self, _, event: &FilesEvent, cx| {
+                let FilesEvent::InsertPath(path) = event;
+                if let Some(chat) = &this.active_chat {
+                    let edit = PluginEvent::ComposerInsert {
+                        text: format!("{path} "),
+                        replace_last: false,
+                        space_before: true,
+                    };
+                    chat.update(cx, |chat, cx| chat.apply_plugin_edit(&edit, cx));
+                    this.focus_active_chat = true;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+        // Changes made in an editor show up when coming back to the app.
+        cx.observe_window_activation(window, |this: &mut Self, window, cx| {
+            if window.is_window_active() {
+                this.refresh_visible_panels(cx);
+            }
+        })
+        .detach();
         let mut this = Self {
             workspaces: Vec::new(),
             active_chat: None,
@@ -342,6 +390,13 @@ impl HubView {
             renaming_sessions: HashSet::new(),
             command_held: false,
             settings_page: None,
+            docks,
+            diff_panel,
+            files_panel,
+            panel_menu: None,
+            resizing_dock: None,
+            panels_follow: None,
+
             pi_updates: pi_updates::Updates::default(),
             update_popover: None,
             update_popover_closed_at: None,
@@ -1064,6 +1119,13 @@ impl HubView {
                 // The run is written to disk now; refresh titles and order.
                 let workspace = chat.read(cx).workspace().to_path_buf();
                 self.load_sessions(&workspace, cx);
+                // The agent may have changed files.
+                if self.diff_panel.read(cx).workspace() == Some(workspace.as_path()) {
+                    self.refresh_diff(cx);
+                }
+                if self.files_panel.read(cx).workspace() == Some(workspace.as_path()) {
+                    self.refresh_files(cx);
+                }
             }
         }
     }
@@ -1075,6 +1137,7 @@ impl HubView {
         let state = json!({
             "version": 1,
             "expandDetails": cx.global::<DetailsExpanded>().expanded,
+            "docks": self.docks.to_json(),
             "hiddenSessions": self.hidden_sessions.iter().collect::<Vec<_>>(),
             "workspaces": self.workspaces.iter().map(|entry| json!({
                 "path": entry.path,
@@ -1113,43 +1176,15 @@ impl HubView {
             })
     }
 
-    fn render_sidebar(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let colors = cx.theme().colors.clone();
+    /// Projects and their sessions, in whichever dock holds them.
+    fn render_sessions_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut workspaces = Vec::with_capacity(self.workspaces.len());
         let mut numbered = 0;
         for (index, entry) in self.workspaces.iter().enumerate() {
             workspaces.push(self.render_workspace(index, entry, &mut numbered, cx));
         }
-
         v_flex()
-            .w(px(SIDEBAR_WIDTH))
-            .h_full()
-            .flex_none()
-            .bg(colors.panel_background)
-            .border_r_1()
-            .border_color(colors.border_variant)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .h(px(40.))
-                    .pl(px(12.))
-                    .pr(px(8.))
-                    .child(
-                        div().flex_1().child(
-                            Label::new("Projects")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                                .weight(FontWeight::MEDIUM),
-                        ),
-                    )
-                    .child(
-                        IconButton::new("add-workspace", IconName::Plus)
-                            .tooltip(Tooltip::with_keys("Add project", "⌘O"))
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.prompt_add_workspace(&AddWorkspace, window, cx)
-                            })),
-                    ),
-            )
+            .size_full()
             .child(
                 div()
                     .id("sidebar-scroll")
@@ -1165,6 +1200,331 @@ impl HubView {
                     .children(workspaces),
             )
             .child(self.render_installation_status(cx))
+            .into_any_element()
+    }
+
+    /// The left dock is a plain sidebar; the right one floats over the main
+    /// area as a card, like the inspector sidebars of macOS.
+    fn render_dock(&self, side: DockSide, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let dock = self.docks.dock(side);
+        if !dock.is_shown() {
+            return None;
+        }
+        let active = dock.active?;
+        let colors = cx.theme().colors.clone();
+        let content = match active {
+            PanelKind::Sessions => self.render_sessions_panel(cx),
+            PanelKind::Files => AnyView::from(self.files_panel.clone())
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+            PanelKind::Diff => AnyView::from(self.diff_panel.clone())
+                .cached(StyleRefinement::default().size_full())
+                .into_any_element(),
+        };
+        let body = v_flex()
+            .size_full()
+            .child(self.render_dock_header(side, cx))
+            .child(v_flex().flex_1().min_h(px(0.)).child(content));
+        let handle = div()
+            .id(match side {
+                DockSide::Left => "left-dock-resize",
+                DockSide::Right => "right-dock-resize",
+            })
+            .absolute()
+            .top_0()
+            .bottom_0()
+            .w(px(5.))
+            .map(|this| match side {
+                DockSide::Left => this.right_0(),
+                DockSide::Right => this.left(px(FLOATING_DOCK_MARGIN / 2. - 2.)),
+            })
+            .cursor_col_resize()
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, cx| {
+                    this.resizing_dock = Some(side);
+                    cx.stop_propagation();
+                }),
+            );
+        Some(match side {
+            DockSide::Left => div()
+                .relative()
+                .flex_none()
+                .w(px(dock.width))
+                .h_full()
+                .bg(colors.panel_background)
+                .border_r_1()
+                .border_color(colors.border_variant)
+                .child(body)
+                .child(handle)
+                .into_any_element(),
+            DockSide::Right => div()
+                .relative()
+                .flex_none()
+                .h_full()
+                .p(px(FLOATING_DOCK_MARGIN))
+                .child(
+                    div()
+                        .w(px(dock.width))
+                        .h_full()
+                        .rounded(px(10.))
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.panel_background)
+                        .shadow_lg()
+                        .overflow_hidden()
+                        .child(body),
+                )
+                .child(handle)
+                .into_any_element(),
+        })
+    }
+
+    /// A dock with one panel shows its title; with several, a tab per panel.
+    /// Right-click a tab or the title to move the panel.
+    fn render_dock_header(&self, side: DockSide, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let dock = self.docks.dock(side);
+        let active = dock.active;
+        let tabbed = dock.panels.len() > 1;
+        let title =
+            if tabbed {
+                h_flex()
+                    .gap(px(2.))
+                    .children(dock.panels.iter().map(|&kind| {
+                        let selected = active == Some(kind);
+                        h_flex()
+                            .id(ElementId::Name(format!("dock-tab:{kind:?}").into()))
+                            .flex_none()
+                            .h(px(24.))
+                            .px(px(6.))
+                            .gap(px(5.))
+                            .rounded(px(5.))
+                            .cursor_pointer()
+                            .when(selected, |this| this.bg(colors.ghost_element_selected))
+                            .hover(|style| style.bg(colors.ghost_element_hover))
+                            .when(!selected, |this| this.tooltip(Tooltip::text(kind.title())))
+                            .on_click(cx.listener(move |this, _, _, cx| this.show_panel(kind, cx)))
+                            .on_mouse_down(
+                                MouseButton::Right,
+                                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                                    cx.stop_propagation();
+                                    this.open_panel_menu(kind, event.position, cx);
+                                }),
+                            )
+                            .child(Icon::new(kind.icon()).size(IconSize::Small).color(
+                                if selected {
+                                    Color::Default
+                                } else {
+                                    Color::Muted
+                                },
+                            ))
+                            .when(selected, |this| {
+                                this.child(
+                                    Label::new(kind.title())
+                                        .size(LabelSize::Small)
+                                        .weight(FontWeight::MEDIUM),
+                                )
+                            })
+                    }))
+                    .into_any_element()
+            } else {
+                Label::new(active.map(PanelKind::title).unwrap_or_default())
+                    .size(LabelSize::Small)
+                    .color(Color::Muted)
+                    .weight(FontWeight::MEDIUM)
+                    .into_any_element()
+            };
+        let actions = (active == Some(PanelKind::Sessions)).then(|| {
+            IconButton::new("add-workspace", IconName::Plus)
+                .tooltip(Tooltip::with_keys("Add project", "⌘O"))
+                .on_click(cx.listener(|this, _, window, cx| {
+                    this.prompt_add_workspace(&AddWorkspace, window, cx)
+                }))
+        });
+        h_flex()
+            .id(match side {
+                DockSide::Left => "left-dock-header",
+                DockSide::Right => "right-dock-header",
+            })
+            .flex_none()
+            .h(px(40.))
+            .pl(px(if tabbed { 8. } else { 12. }))
+            .pr(px(8.))
+            .gap(px(4.))
+            .on_mouse_down(
+                MouseButton::Right,
+                cx.listener(move |this, event: &MouseDownEvent, _, cx| {
+                    if let Some(kind) = active {
+                        this.open_panel_menu(kind, event.position, cx);
+                    }
+                }),
+            )
+            .child(div().flex_1().min_w(px(0.)).flex().child(title))
+            .children(actions)
+            .into_any_element()
+    }
+
+    fn open_panel_menu(
+        &mut self,
+        kind: PanelKind,
+        position: Point<Pixels>,
+        cx: &mut Context<Self>,
+    ) {
+        self.panel_menu = Some(PanelMenu { kind, position });
+        cx.notify();
+    }
+
+    fn render_panel_menu(&self, menu: &PanelMenu, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let kind = menu.kind;
+        let target = self.docks.side_of(kind).other();
+        let item = |id: &'static str, icon: IconName, label: &'static str| {
+            h_flex()
+                .id(id)
+                .h(px(28.))
+                .px(px(8.))
+                .gap(px(8.))
+                .rounded(px(5.))
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.element_hover))
+                .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Default))
+                .child(Label::new(label).size(LabelSize::Small))
+        };
+        let move_item = match target {
+            DockSide::Left => item("menu-move-panel", IconName::PanelLeft, "Move to the left"),
+            DockSide::Right => item("menu-move-panel", IconName::PanelRight, "Move to the right"),
+        }
+        .on_click(cx.listener(move |this, _, _, cx| {
+            this.panel_menu = None;
+            this.move_panel(kind, target, cx);
+        }));
+        let hide = item("menu-hide-panel", IconName::Close, "Hide panel").on_click(cx.listener(
+            move |this, _, _, cx| {
+                this.panel_menu = None;
+                let side = this.docks.side_of(kind);
+                this.set_dock_open(side, false, cx);
+            },
+        ));
+        deferred(
+            anchored().position(menu.position).child(
+                v_flex()
+                    .id("panel-menu")
+                    .w(px(180.))
+                    .p(px(4.))
+                    .rounded(px(8.))
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.elevated_surface_background)
+                    .shadow_lg()
+                    .occlude()
+                    .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                        this.panel_menu = None;
+                        cx.notify();
+                    }))
+                    .child(move_item)
+                    .child(hide),
+            ),
+        )
+        .with_priority(1)
+        .into_any_element()
+    }
+
+    fn move_panel(&mut self, kind: PanelKind, to: DockSide, cx: &mut Context<Self>) {
+        self.docks.move_panel(kind, to);
+        self.save(cx);
+        self.refresh_visible_panels(cx);
+        cx.notify();
+    }
+
+    fn set_dock_open(&mut self, side: DockSide, open: bool, cx: &mut Context<Self>) {
+        let dock = self.docks.dock_mut(side);
+        if dock.panels.is_empty() || dock.open == open {
+            return;
+        }
+        dock.open = open;
+        if open {
+            self.refresh_visible_panels(cx);
+        } else {
+            // The keyboard may have been inside the closed panel.
+            self.focus_active_chat = true;
+        }
+        self.save(cx);
+        cx.notify();
+    }
+
+    fn toggle_left_dock(&mut self, _: &ToggleLeftDock, _: &mut Window, cx: &mut Context<Self>) {
+        let open = !self.docks.left.open;
+        self.set_dock_open(DockSide::Left, open, cx);
+    }
+
+    fn toggle_right_dock(&mut self, _: &ToggleRightDock, _: &mut Window, cx: &mut Context<Self>) {
+        let open = !self.docks.right.open;
+        self.set_dock_open(DockSide::Right, open, cx);
+    }
+
+    /// Shows the panel, or hides its dock when the panel is already showing.
+    fn toggle_panel(&mut self, kind: PanelKind, cx: &mut Context<Self>) {
+        if self.docks.is_visible(kind) {
+            let side = self.docks.side_of(kind);
+            self.set_dock_open(side, false, cx);
+        } else {
+            self.show_panel(kind, cx);
+        }
+    }
+
+    fn toggle_files(&mut self, _: &ToggleFiles, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_panel(PanelKind::Files, cx);
+    }
+
+    fn toggle_changes(&mut self, _: &ToggleChanges, _: &mut Window, cx: &mut Context<Self>) {
+        self.toggle_panel(PanelKind::Diff, cx);
+    }
+
+    fn show_panel(&mut self, kind: PanelKind, cx: &mut Context<Self>) {
+        self.docks.show(kind);
+        self.save(cx);
+        match kind {
+            PanelKind::Files => self.refresh_files(cx),
+            PanelKind::Diff => self.refresh_diff(cx),
+            PanelKind::Sessions => {}
+        }
+        cx.notify();
+    }
+
+    /// Follows the active session's project; reads the disk only while visible.
+    fn refresh_files(&mut self, cx: &mut Context<Self>) {
+        let workspace = self
+            .active_chat
+            .as_ref()
+            .map(|chat| chat.read(cx).workspace().to_path_buf());
+        let visible = self.docks.is_visible(PanelKind::Files);
+        self.files_panel.update(cx, |panel, cx| {
+            panel.set_workspace(workspace, cx);
+            if visible {
+                panel.refresh(cx);
+            }
+        });
+    }
+
+    /// Follows the active session's project; reads git only while visible.
+    fn refresh_diff(&mut self, cx: &mut Context<Self>) {
+        let workspace = self
+            .active_chat
+            .as_ref()
+            .map(|chat| chat.read(cx).workspace().to_path_buf());
+        let visible = self.docks.is_visible(PanelKind::Diff);
+        self.diff_panel.update(cx, |panel, cx| {
+            panel.set_workspace(workspace, cx);
+            if visible {
+                panel.refresh(cx);
+            }
+        });
+    }
+
+    fn refresh_visible_panels(&mut self, cx: &mut Context<Self>) {
+        self.refresh_files(cx);
+        self.refresh_diff(cx);
     }
 
     fn render_workspace(
@@ -3042,8 +3402,9 @@ impl HubView {
                     } else {
                         TRAFFIC_LIGHT_PADDING
                     }))
-                    .pr(px(16.))
+                    .pr(px(10.))
                     .gap(px(12.))
+                    .children(self.render_dock_toggle(DockSide::Left, cx))
                     .child(div().flex_1().min_w(px(0.)).flex().child(breadcrumb))
                     .children(plugin_statuses)
                     .children(status)
@@ -3078,8 +3439,36 @@ impl HubView {
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.toggle_details(&ToggleDetails, window, cx)
                         }))
-                    }),
+                    })
+                    .children(self.render_dock_toggle(DockSide::Right, cx)),
             )
+    }
+
+    /// Title bar button for a dock, hidden while the dock holds no panels.
+    fn render_dock_toggle(&self, side: DockSide, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let dock = self.docks.dock(side);
+        if dock.panels.is_empty() {
+            return None;
+        }
+        let (id, icon, title, keys) = match side {
+            DockSide::Left => ("toggle-left-dock", IconName::PanelLeft, "Left panel", "⌘B"),
+            DockSide::Right => (
+                "toggle-right-dock",
+                IconName::PanelRight,
+                "Right panel",
+                "⌘R",
+            ),
+        };
+        Some(
+            IconButton::new(id, icon)
+                .toggle_state(dock.open)
+                .tooltip(Tooltip::with_keys(title, keys))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let open = !this.docks.dock(side).open;
+                    this.set_dock_open(side, open, cx);
+                }))
+                .into_any_element(),
+        )
     }
 
     /// Zed-style: quiet while downloading, a button once the update is ready.
@@ -3174,6 +3563,13 @@ impl Render for HubView {
                 None => window.focus(&self.focus_handle),
             }
         }
+
+        // Panels follow the active session, wherever it was switched.
+        let active_id = self.active_chat.as_ref().map(|chat| chat.entity_id());
+        if self.panels_follow != active_id {
+            self.panels_follow = active_id;
+            cx.defer_in(window, |this, _, cx| this.refresh_visible_panels(cx));
+        }
         let colors = cx.theme().colors.clone();
         self.animation.set_active(self.sidebar_is_animating(cx), cx);
 
@@ -3238,6 +3634,37 @@ impl Render for HubView {
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::select_session))
             .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::toggle_left_dock))
+            .on_action(cx.listener(Self::toggle_right_dock))
+            .on_action(cx.listener(Self::toggle_files))
+            .on_action(cx.listener(Self::toggle_changes))
+            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
+                let Some(side) = this.resizing_dock else {
+                    return;
+                };
+                if event.pressed_button != Some(MouseButton::Left) {
+                    this.resizing_dock = None;
+                    this.save(cx);
+                    return;
+                }
+                let x = f32::from(event.position.x);
+                let width = match side {
+                    DockSide::Left => x,
+                    DockSide::Right => {
+                        f32::from(window.viewport_size().width) - x - FLOATING_DOCK_MARGIN
+                    }
+                };
+                this.docks.dock_mut(side).width = width.clamp(side.min_width(), side.max_width());
+                cx.notify();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.resizing_dock.take().is_some() {
+                        this.save(cx);
+                    }
+                }),
+            )
             .on_action(|_: &Minimize, window, _| window.minimize_window())
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
@@ -3263,7 +3690,7 @@ impl Render for HubView {
                     .flex()
                     .flex_1()
                     .min_h(px(0.))
-                    .child(self.render_sidebar(cx))
+                    .children(self.render_dock(DockSide::Left, cx))
                     .child(
                         v_flex()
                             .flex_1()
@@ -3271,14 +3698,33 @@ impl Render for HubView {
                             .h_full()
                             .children(notice)
                             .child(main),
-                    ),
+                    )
+                    .children(self.render_dock(DockSide::Right, cx)),
             )
             .children(
                 self.session_menu
                     .as_ref()
                     .map(|menu| self.render_session_menu(menu, cx)),
             )
+            .children(
+                self.panel_menu
+                    .as_ref()
+                    .map(|menu| self.render_panel_menu(menu, cx)),
+            )
     }
+}
+
+struct PanelMenu {
+    kind: PanelKind,
+    position: Point<Pixels>,
+}
+
+fn load_docks(path: &Path) -> Docks {
+    fs::read(path)
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+        .map(|state| Docks::from_json(&state["docks"]))
+        .unwrap_or_default()
 }
 
 /// `~/Library/Application Support/pi-gpui/state.json` on macOS. App data
@@ -3349,7 +3795,7 @@ fn write_atomically(path: &Path, value: &Value) -> Result<(), String> {
 }
 
 /// Opens a file in Zed when it is installed, otherwise in the default text editor.
-fn open_in_editor(path: &Path) {
+pub(crate) fn open_in_editor(path: &Path) {
     let zed = Path::new("/Applications/Zed.app");
     let mut command = std::process::Command::new("open");
     if zed.exists() {

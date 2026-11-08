@@ -1,5 +1,8 @@
 mod attachments;
 mod chat;
+mod diff;
+mod dock;
+mod file_tree;
 mod highlight;
 mod hub;
 mod jsonl;
@@ -69,6 +72,7 @@ fn main() {
         settings::init(cx);
         text_input::bind_keys(cx);
         chat::bind_keys(cx);
+        file_tree::bind_keys(cx);
         hub::bind_keys(cx);
         cx.bind_keys([
             KeyBinding::new("cmd-q", Quit, None),
@@ -203,6 +207,11 @@ fn app_menus() -> Vec<Menu> {
         Menu {
             name: "View".into(),
             items: vec![
+                MenuItem::action("Left Panel", hub::ToggleLeftDock),
+                MenuItem::action("Right Panel", hub::ToggleRightDock),
+                MenuItem::action("Files", hub::ToggleFiles),
+                MenuItem::action("Changes", hub::ToggleChanges),
+                MenuItem::separator(),
                 MenuItem::action("Session Tree", chat::ToggleTree),
                 MenuItem::action("Change Model", chat::ToggleModelPicker),
                 MenuItem::action("Expand or Collapse Step Details", hub::ToggleDetails),
