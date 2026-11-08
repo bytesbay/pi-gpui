@@ -68,7 +68,7 @@ pub const MIN_PI: Version = Version {
 /// major still run, with a note that they are untested.
 pub const TESTED_PI: Version = Version {
     major: 1,
-    minor: 4,
+    minor: 5,
     patch: 0,
 };
 
@@ -413,7 +413,8 @@ mod tests {
         assert!(supports(version("1.9.0")));
         assert!(!supports(version("2.0.0")));
         assert!(!is_untested(version("1.4.7")));
-        assert!(is_untested(version("1.5.0")));
+        assert!(!is_untested(version("1.5.2")));
+        assert!(is_untested(version("1.6.0")));
     }
 
     #[test]

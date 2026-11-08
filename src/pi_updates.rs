@@ -207,8 +207,8 @@ mod tests {
         assert!(is_newer("0.10.0", "0.9.9"));
         assert!(!is_newer("1.0.0", "1.0.0"));
         let version = |text| Version::find_in(text).unwrap();
-        assert_eq!(compatibility(version("1.4.9")), PiCompatibility::Supported);
-        assert_eq!(compatibility(version("1.5.0")), PiCompatibility::Untested);
+        assert_eq!(compatibility(version("1.5.9")), PiCompatibility::Supported);
+        assert_eq!(compatibility(version("1.6.0")), PiCompatibility::Untested);
         assert_eq!(
             compatibility(version("2.0.0")),
             PiCompatibility::NeedsAppUpdate
