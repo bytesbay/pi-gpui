@@ -4,15 +4,19 @@
 
 use std::collections::HashSet;
 use std::fs;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use gpui::{AnyElement, Context, ElementId, FontWeight, Task, Window, div, px};
+use gpui::{
+    AnyElement, Context, ElementId, FontWeight, HighlightStyle, Hsla, StyledText, Task, Window,
+    div, px,
+};
 
 use crate::sessions;
 use crate::settings::Settings;
-use crate::ui::AnimationTicker;
 use crate::ui::prelude::*;
+use crate::ui::{AnimationTicker, SyntaxColors};
 
 /// Lines drawn per file; the rest is summarized. Keeps a huge generated
 /// file from building thousands of elements.
@@ -321,42 +325,60 @@ impl DiffPanel {
                 .into_any_element();
         }
         let hidden = file.lines.len().saturating_sub(MAX_LINES_PER_FILE);
-        let lines = file.lines.iter().take(MAX_LINES_PER_FILE).map(|line| {
-            let (sign, background, text_color) = match line.kind {
-                LineKind::Hunk => (
-                    "",
-                    Some(colors.info_background.opacity(0.5)),
-                    colors.text_muted,
-                ),
-                LineKind::Context => (" ", None, colors.text_muted),
-                LineKind::Added => ("+", Some(colors.success.opacity(0.14)), colors.text),
-                LineKind::Removed => ("−", Some(colors.error.opacity(0.14)), colors.text),
-            };
-            h_flex()
-                .items_start()
-                .when_some(background, |this, background| this.bg(background))
-                .child(
-                    div()
-                        .flex_none()
-                        .w(px(16.))
-                        .text_center()
-                        .text_color(colors.text_placeholder)
-                        .child(sign),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.))
-                        .pr(px(6.))
-                        .text_color(text_color)
-                        // Keeps empty lines one line tall.
-                        .child(if line.text.is_empty() {
-                            " ".to_string()
-                        } else {
-                            line.text.replace('\t', "    ")
-                        }),
-                )
-        });
+        let shown = &file.lines[..file.lines.len().min(MAX_LINES_PER_FILE)];
+        let texts: Vec<String> = shown
+            .iter()
+            .map(|line| line.text.replace('\t', "    "))
+            .collect();
+        let highlights = line_highlights(&file.path, shown, &texts, &colors.syntax);
+        let lines = shown
+            .iter()
+            .zip(texts)
+            .zip(highlights)
+            .map(|((line, text), spans)| {
+                let (sign, background, text_color) = match line.kind {
+                    LineKind::Hunk => (
+                        "",
+                        Some(colors.info_background.opacity(0.5)),
+                        colors.text_muted,
+                    ),
+                    LineKind::Context => (" ", None, colors.text_muted),
+                    LineKind::Added => ("+", Some(colors.success.opacity(0.14)), colors.text),
+                    LineKind::Removed => ("−", Some(colors.error.opacity(0.14)), colors.text),
+                };
+                h_flex()
+                    .items_start()
+                    .when_some(background, |this, background| this.bg(background))
+                    .child(
+                        div()
+                            .flex_none()
+                            .w(px(16.))
+                            .text_center()
+                            .text_color(colors.text_placeholder)
+                            .child(sign),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w(px(0.))
+                            .pr(px(6.))
+                            .text_color(text_color)
+                            // Keeps empty lines one line tall.
+                            .child(if text.is_empty() {
+                                StyledText::new(" ")
+                            } else {
+                                StyledText::new(text).with_highlights(spans.into_iter().map(
+                                    |(range, color)| {
+                                        let style = HighlightStyle {
+                                            color: Some(color),
+                                            ..HighlightStyle::default()
+                                        };
+                                        (range, style)
+                                    },
+                                ))
+                            }),
+                    )
+            });
         v_flex()
             .mx(px(4.))
             .mb(px(6.))
@@ -628,9 +650,116 @@ pub fn parse_diff(output: &str) -> Vec<FileDiff> {
     files
 }
 
+/// Syntax colors for each diff line, as ranges within the line's text. The
+/// new side (context and added lines) and the old side (context and removed
+/// lines) are highlighted as two continuous texts, so strings and comments
+/// that span lines keep their colors. Hunk headers stay plain.
+fn line_highlights(
+    path: &str,
+    lines: &[DiffLine],
+    texts: &[String],
+    colors: &SyntaxColors,
+) -> Vec<Vec<(Range<usize>, Hsla)>> {
+    let name = path.rsplit('/').next().unwrap_or(path);
+    let language = name
+        .rsplit_once('.')
+        .map_or(name, |(_, extension)| extension);
+    let mut new_side = String::new();
+    let mut old_side = String::new();
+    // For each line: which side it is read from, and where it starts there.
+    let mut places = Vec::with_capacity(lines.len());
+    for (line, text) in lines.iter().zip(texts) {
+        let place = match line.kind {
+            LineKind::Hunk => None,
+            LineKind::Context => {
+                old_side.push_str(text);
+                old_side.push('\n');
+                Some((true, push_line(&mut new_side, text)))
+            }
+            LineKind::Added => Some((true, push_line(&mut new_side, text))),
+            LineKind::Removed => Some((false, push_line(&mut old_side, text))),
+        };
+        places.push(place);
+    }
+    let new_spans = crate::highlight::highlight(&new_side, Some(language), colors);
+    let old_spans = crate::highlight::highlight(&old_side, Some(language), colors);
+    places
+        .into_iter()
+        .zip(texts)
+        .map(|(place, text)| {
+            let Some((new, start)) = place else {
+                return Vec::new();
+            };
+            let Some(spans) = (if new { &new_spans } else { &old_spans }) else {
+                return Vec::new();
+            };
+            let end = start + text.len();
+            let first = spans.partition_point(|(range, _)| range.end <= start);
+            spans[first..]
+                .iter()
+                .take_while(|(range, _)| range.start < end)
+                .map(|(range, color)| {
+                    (
+                        range.start.max(start) - start..range.end.min(end) - start,
+                        *color,
+                    )
+                })
+                .filter(|(range, _)| !range.is_empty())
+                .collect()
+        })
+        .collect()
+}
+
+/// Appends `text` as a line and returns where it starts.
+fn push_line(side: &mut String, text: &str) -> usize {
+    let start = side.len();
+    side.push_str(text);
+    side.push('\n');
+    start
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn highlights_each_side_of_a_rust_diff() {
+        let lines = vec![
+            DiffLine {
+                kind: LineKind::Hunk,
+                text: "@@ -1,2 +1,2 @@".into(),
+            },
+            DiffLine {
+                kind: LineKind::Context,
+                text: "fn main() {".into(),
+            },
+            DiffLine {
+                kind: LineKind::Removed,
+                text: "    let a = 1;".into(),
+            },
+            DiffLine {
+                kind: LineKind::Added,
+                text: "    let b = \"two\";".into(),
+            },
+        ];
+        let texts: Vec<String> = lines.iter().map(|line| line.text.clone()).collect();
+        let colors = crate::ui::Theme::ayu(true).colors.syntax;
+        let spans = line_highlights("src/main.rs", &lines, &texts, &colors);
+        assert!(spans[0].is_empty(), "hunk headers stay plain");
+        for (spans, text) in spans.iter().zip(&texts).skip(1) {
+            assert!(!spans.is_empty(), "no colors in {text:?}");
+            for (range, _) in spans {
+                assert!(range.end <= text.len());
+            }
+        }
+        let keyword = |index: usize, word: &str| {
+            let start = texts[index].find(word).unwrap();
+            spans[index].iter().any(|(range, _)| range.contains(&start))
+        };
+        assert!(keyword(1, "fn"));
+        assert!(keyword(2, "let"));
+        assert!(keyword(3, "\"two\""));
+    }
 
     #[test]
     fn parses_modified_added_deleted_and_renamed_files() {
