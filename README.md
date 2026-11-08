@@ -2,6 +2,8 @@
 
 A native Mac app for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, so your models, extensions, skills and sessions work as they do in the terminal.
 
+The app is 16 MB, its window is up in about 0.4 s, and it uses about 75 MB of memory at idle. Electron clients for pi take 0.5 to 1.1 s and 190 to 430 MB ([how this was measured](docs/BENCHMARKS.md)).
+
 [Website](https://pi-gpui.dev) · [Download](https://github.com/bytesbay/pi-gpui/releases/latest) · [Plugins](docs/PLUGINS.md) · [中文](docs/README.zh-CN.md)
 
 ![Pi GPUI: projects and sessions in the sidebar, an extension question answered inline](docs/demo.gif)
