@@ -16,6 +16,8 @@ brew install --cask bytesbay/tap/pi-gpui
 
 Or download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar. Apple Silicon, macOS 13 or newer.
 
+Linux and Windows aren't supported yet. Linux is planned: follow or 👍 [#5](https://github.com/bytesbay/pi-gpui/issues/5) to hear when it ships.
+
 Needs pi 1.4 or newer within pi 1.x. The app finds pi in `PI_EXECUTABLE`, `PATH` or your login shell (so nvm installs work).
 
 To move a session you started in the terminal into the app, add the `/gpui` command to pi:

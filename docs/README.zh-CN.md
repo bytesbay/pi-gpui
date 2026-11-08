@@ -18,6 +18,8 @@ brew install --cask bytesbay/tap/pi-gpui
 
 也可以从 [Releases](https://github.com/bytesbay/pi-gpui/releases) 下载 `Pi-GPUI-*.zip`，把应用拖进「应用程序」。安装包经过 Apple 签名和公证。应用会自动更新：新版本下载完成后，标题栏会出现 "Restart to update"。需要 Apple 芯片和 macOS 13 或更高版本。
 
+暂不支持 Linux 和 Windows。Linux 版本在计划中：关注或给 [#5](https://github.com/bytesbay/pi-gpui/issues/5) 点 👍，发布时会收到通知。
+
 需要 pi 1.4 或更高的 1.x 版本。应用会在 `PI_EXECUTABLE`、`PATH` 或登录 shell 中查找 pi（所以 nvm 安装的 pi 也能找到）。
 
 想把终端里正在进行的会话转到应用里，给 pi 加上 `/gpui` 命令：
