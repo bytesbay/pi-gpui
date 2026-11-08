@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi GPUI: the native Mac client for the pi coding agent</title>
-<meta name="description" content="Pi GPUI is a native Mac client for the pi coding agent, written in Rust with GPUI and Metal. It runs your installed pi with its sessions, forks, session tree and slash commands. Free, MIT licensed, a desktop alternative to the Claude Code app.">
+<title>Pi GPUI: the native desktop client for the pi coding agent</title>
+<meta name="description" content="Pi GPUI is a native desktop client for the pi coding agent, written in Rust with GPUI. macOS today, Linux next. It runs your installed pi with its sessions, forks, session tree and slash commands. Free, MIT licensed, a desktop alternative to the Claude Code app.">
 <meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, claude code app alternative, claude code desktop alternative, ai coding agent gui">
 <link rel="canonical" href="https://pi-gpui.dev/">
 <meta name="theme-color" content="#0b0e14">
@@ -13,14 +13,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Pi GPUI">
 <meta property="og:url" content="https://pi-gpui.dev/">
-<meta property="og:title" content="Pi GPUI: the native Mac client for the pi coding agent">
-<meta property="og:description" content="A native Mac client for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
+<meta property="og:title" content="Pi GPUI: the native desktop client for the pi coding agent">
+<meta property="og:description" content="A native desktop client for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
 <meta property="og:image" content="https://pi-gpui.dev/img/og.jpg">
 <meta property="og:image:width" content="1200">
 <meta property="og:image:height" content="630">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pi GPUI: the native Mac client for the pi coding agent">
-<meta name="twitter:description" content="A native Mac client for pi, written in Rust with GPUI.">
+<meta name="twitter:title" content="Pi GPUI: the native desktop client for the pi coding agent">
+<meta name="twitter:description" content="A native desktop client for pi, written in Rust with GPUI.">
 <meta name="twitter:image" content="https://pi-gpui.dev/img/og.jpg">
 
 <link rel="icon" href="/img/icon.svg" type="image/svg+xml">
@@ -35,7 +35,7 @@
   "@type": "SoftwareApplication",
   "name": "Pi GPUI",
   "alternateName": ["pi gui", "pi interface", "pi desktop app"],
-  "description": "A native Mac client for the pi coding agent, written in Rust with GPUI and Metal.",
+  "description": "A native desktop client for the pi coding agent, written in Rust with GPUI. Runs on macOS today; Linux is planned.",
   "license": "https://opensource.org/licenses/MIT",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS (Apple silicon)",
@@ -55,14 +55,14 @@
   "@type": "FAQPage",
   "mainEntity": [
     { "@type": "Question", "name": "What is Pi GPUI?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A Mac app for the pi coding agent. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU." } },
+      "acceptedAnswer": { "@type": "Answer", "text": "A desktop app for the pi coding agent, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU." } },
     { "@type": "Question", "name": "Is Pi GPUI an alternative to the Claude Code app?",
-      "acceptedAnswer": { "@type": "Answer", "text": "If you want a desktop app for an agentic coding workflow, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other model providers. You keep pi's models, extensions and skills, and get a native Mac window around them." } },
+      "acceptedAnswer": { "@type": "Answer", "text": "If you want a desktop app for an agentic coding workflow, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other model providers. You keep pi's models, extensions and skills, and get a native desktop window around them." } },
     { "@type": "Question", "name": "Is it written in Rust?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes. The app is Rust on GPUI, the UI framework behind the Zed editor, and renders with Metal. pi itself stays the agent engine; the app talks to it over JSON lines." } },
     { "@type": "Question", "name": "Do I need pi installed?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes, pi 1.4 or newer within pi 1.x. The app finds pi in PI_EXECUTABLE, PATH or your login shell, so nvm installs work. It never installs or updates pi on its own." } },
-    { "@type": "Question", "name": "Which Macs does it run on?",
+    { "@type": "Question", "name": "Which systems does it run on?",
       "acceptedAnswer": { "@type": "Answer", "text": "Macs with Apple silicon, macOS 13 or newer. The app updates itself from GitHub releases. Linux and Windows are not supported yet; Linux is planned (GitHub issue #5)." } },
     { "@type": "Question", "name": "Is it free?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free and open source under the MIT license, with the source on GitHub." } }
@@ -95,8 +95,8 @@
     <a class="pill" href="https://github.com/bytesbay/pi-gpui/releases/latest" data-release-link>
       <span class="dot"></span><span data-version>Latest release</span><span class="pill-sep">·</span>macOS, Apple silicon
     </a>
-    <h1>A native Mac app<br>for <span class="rotor" aria-live="polite"><span class="strut" aria-hidden="true">p</span><span class="word"><span data-rotor>pi</span></span></span></h1>
-    <p class="lead">Pi GPUI is a Mac app for the pi coding agent. It runs the pi you already have, so your models, extensions, skills and sessions are there from the first launch. It's written in Rust and drawn on the GPU, so it stays fast in long sessions.</p>
+    <h1>A native app<br>for <span class="rotor" aria-live="polite"><span class="strut" aria-hidden="true">p</span><span class="word"><span data-rotor>pi</span></span></span></h1>
+    <p class="lead">Pi GPUI is a desktop app for the pi coding agent, on macOS for now. It runs the pi you already have, so your models, extensions, skills and sessions are there from the first launch. It's written in Rust and drawn on the GPU, so it stays fast in long sessions.</p>
     <div class="cta">
       <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 12.5V14h12v-1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -109,7 +109,7 @@
 
   <section class="demo reveal" aria-label="Pi GPUI in use">
     <div class="frame frame-window">
-      <video src="/demo.mp4?v=3" poster="/img/demo-poster.webp?v=3" width="1920" height="1214" autoplay muted loop playsinline preload="metadata" aria-label="pi asks which vibe the Horse Tinder chat should have, gets an answer from the card in the chat, then builds the feature"></video>
+      <video src="/demo.mp4?v=4" poster="/img/demo-poster.webp?v=4" width="1920" height="1302" autoplay muted loop playsinline preload="metadata" aria-label="Sessions work in several projects while pi adds retries with backoff to a Rust sync client, runs cargo test, and the diff opens in the Changes panel"></video>
     </div>
     <p class="caption mono">Real session, sped up: building Horse Tinder, the Tinder for horses. pi asks a question right in the chat, then gets to work.</p>
   </section>
@@ -273,11 +273,11 @@ models · tools · extensions · your files</pre>
     <h2>Common questions</h2>
     <details open>
       <summary>What is Pi GPUI?</summary>
-      <p>A Mac app for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window.</p>
+      <p>A desktop app for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window.</p>
     </details>
     <details>
       <summary>Is it an alternative to the Claude Code app?</summary>
-      <p>If you want a desktop app for coding with an agent, yes. pi is an open coding agent that works with Claude and other providers, and Pi GPUI gives it a native Mac window. Your models, extensions and skills stay the same.</p>
+      <p>If you want a desktop app for coding with an agent, yes. pi is an open coding agent that works with Claude and other providers, and Pi GPUI gives it a native desktop window. Your models, extensions and skills stay the same.</p>
     </details>
     <details>
       <summary>Is it written in Rust?</summary>
@@ -288,8 +288,8 @@ models · tools · extensions · your files</pre>
       <p>Yes, pi 1.4 or newer within 1.x. The app finds it in <code>PI_EXECUTABLE</code>, <code>PATH</code> or your login shell, so nvm installs work. It never installs or updates pi on its own.</p>
     </details>
     <details>
-      <summary>Which Macs does it run on?</summary>
-      <p>Macs with Apple silicon. Releases are signed and notarized by Apple, so macOS opens them without a warning. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
+      <summary>Which systems does it run on?</summary>
+      <p>macOS 13 or newer on Apple silicon. Releases are signed and notarized by Apple, so macOS opens them without a warning. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
       <p>Linux and Windows aren't supported yet. Linux is planned: follow <a href="https://github.com/bytesbay/pi-gpui/issues/5" rel="noopener">issue #5</a> to hear when it ships.</p>
     </details>
     <details>

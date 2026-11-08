@@ -204,7 +204,7 @@ h1 {
   background: var(--bg-2);
   box-shadow: 0 30px 80px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
 }
-.frame video { width: 100%; aspect-ratio: 1920 / 1214; }
+.frame video { width: 100%; aspect-ratio: 1920 / 1302; }
 .caption { text-align: center; color: var(--dim); font-size: 12px; margin: 16px auto 0; max-width: 680px; }
 
 /* Built-with strip */
