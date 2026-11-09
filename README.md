@@ -16,7 +16,7 @@ The app is 16 MB, its window is up in about 0.4 s, and it uses about 75 MB of me
 brew install --cask bytesbay/tap/pi-gpui
 ```
 
-Or download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar. Apple Silicon, macOS 13 or newer.
+Or download `Pi-GPUI-*.zip` from [Releases](https://github.com/bytesbay/pi-gpui/releases) and move the app to Applications. Releases are signed with a Developer ID certificate and notarized by Apple. The app updates itself: when a new version is downloaded, "Restart to update" appears in the title bar. Apple Silicon, macOS 13 or newer.
 
 Linux and Windows aren't supported yet. Linux is planned: follow or 👍 [#5](https://github.com/bytesbay/pi-gpui/issues/5) to hear when it ships.
 
@@ -89,7 +89,7 @@ In the tree: `↑↓` move, `←→` jump between branches, `↩` go there, `⌥
 
 ## Compatibility
 
-The app has its own version and supports a range of pi versions (`MIN_PI` and `TESTED_PI` in `src/pi.rs`). pi minors newer than the tested one still run, marked "not tested yet". Each release publishes `pi-compat.json`, and the updater only offers releases that support your pi. The app never updates pi.
+The app has its own version and supports a range of pi versions (`MIN_PI` and `TESTED_PI` in `src/pi.rs`). pi minors newer than the tested one still run, marked "not tested yet". Each release publishes `pi-compat.json`, and the updater only offers releases that support your pi. The app updates pi only when you click.
 
 Tree navigation needs something pi's RPC lacks, so the app passes a small extension of its own (`extensions/pi-gpui-bridge.ts`) to the pi processes it starts. Nothing is installed.
 

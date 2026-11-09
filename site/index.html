@@ -5,8 +5,8 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Pi GPUI: the native desktop client for the pi coding agent</title>
 <meta name="author" content="Miroslaw Shpak">
-<meta name="description" content="Pi GPUI is a native desktop client for the pi coding agent, written in Rust with GPUI. macOS today, Linux next. It runs your installed pi with its sessions, forks, session tree and slash commands. Free, MIT licensed, a desktop alternative to the Claude Code app.">
-<meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, claude code app alternative, claude code desktop alternative, ai coding agent gui">
+<meta name="description" content="Pi GPUI is a native desktop client for the pi coding agent, written in Rust with GPUI. Available for macOS; Linux is planned. It runs your installed pi with its sessions, forks, session tree and slash commands. Free and MIT licensed.">
+<meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, pi native desktop client, ai coding agent gui">
 <link rel="canonical" href="https://pi-gpui.dev/">
 <meta name="theme-color" content="#0b0e14">
 <meta name="color-scheme" content="dark">
@@ -39,12 +39,12 @@
   "description": "A native desktop client for the pi coding agent, written in Rust with GPUI. Runs on macOS today; Linux is planned.",
   "license": "https://opensource.org/licenses/MIT",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "macOS (Apple silicon)",
+  "operatingSystem": "macOS 13 or newer (Apple silicon)",
   "url": "https://pi-gpui.dev/",
   "downloadUrl": "https://github.com/bytesbay/pi-gpui/releases/latest",
   "image": "https://pi-gpui.dev/img/og.jpg?v=2",
   "screenshot": "https://pi-gpui.dev/img/shot-dialog.jpg",
-  "softwareRequirements": "pi 1.4 or newer",
+  "softwareRequirements": "pi 1.4 or newer within pi 1.x",
   "programmingLanguage": "Rust",
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
   "codeRepository": "https://github.com/bytesbay/pi-gpui",
@@ -58,8 +58,8 @@
   "mainEntity": [
     { "@type": "Question", "name": "What is Pi GPUI?",
       "acceptedAnswer": { "@type": "Answer", "text": "A desktop app for the pi coding agent, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU." } },
-    { "@type": "Question", "name": "Is Pi GPUI an alternative to the Claude Code app?",
-      "acceptedAnswer": { "@type": "Answer", "text": "If you want a desktop app for an agentic coding workflow, yes. Pi GPUI is a GUI for pi, an open coding agent that works with Claude and other model providers. You keep pi's models, extensions and skills, and get a native desktop window around them." } },
+    { "@type": "Question", "name": "Can I use Claude models?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes, if your pi is set up for them. Pi GPUI runs your pi with its models, extensions and skills as they are." } },
     { "@type": "Question", "name": "Is it written in Rust?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes. The app is Rust on GPUI, the UI framework behind the Zed editor, and renders with Metal. pi itself stays the agent engine; the app talks to it over JSON lines." } },
     { "@type": "Question", "name": "Do I need pi installed?",
@@ -104,9 +104,9 @@
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 12.5V14h12v-1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         Download for macOS
       </a>
-      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">View source</a>
+      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">Star on GitHub</a>
     </div>
-    <p class="hint mono">Needs <a href="https://github.com/earendil-works/pi" rel="noopener">pi</a> 1.4+ · free, MIT licensed · signed and notarized by Apple</p>
+    <p class="hint mono">Needs <a href="https://github.com/earendil-works/pi" rel="noopener">pi</a> 1.4+ and macOS 13 on Apple silicon · free, MIT licensed · notarized by Apple</p>
   </section>
 
   <section class="demo reveal" aria-label="Pi GPUI in use">
@@ -125,12 +125,12 @@
 
   <section id="start" class="section">
     <p class="mono eyebrow">Get started</p>
-    <h2>Running in a minute.</h2>
+    <h2>Install in three steps.</h2>
     <div class="grid steps">
       <article class="card">
         <span class="mono tag">1</span>
         <h3>Install pi</h3>
-        <p>Skip this if <code>pi</code> already runs in your terminal.</p>
+        <p>Skip this if pi 1.4 or newer is already installed.</p>
         <pre class="cmd mono"><span class="muted">$</span> curl -fsSL https://pi.dev/install.sh | sh</pre>
       </article>
       <article class="card">
@@ -205,8 +205,8 @@
     <div>
       <p class="mono eyebrow">How it works</p>
       <h2>Each session runs your own pi.</h2>
-      <p>For every session the app starts your installed pi with <code>pi --mode rpc</code> and talks to it over stdin and stdout. Nothing sits in between and no copy of pi ships inside the app, so whatever works in your terminal works here too.</p>
-      <p>The interface is built with GPUI, the framework behind the Zed editor, and drawn with Metal. Long sessions full of code scroll without stutter.</p>
+      <p>For every session the app starts your installed pi with <code>pi --mode rpc</code> and talks to it over stdin and stdout. No copy of pi ships inside the app. It loads one small extension for session tree navigation and usage numbers. Extension questions work inline; extension status lines and widgets are not shown yet.</p>
+      <p>The interface is built with GPUI, the framework behind the Zed editor, and drawn with Metal.</p>
     </div>
     <pre class="diagram mono" aria-label="Architecture"><span class="c-accent">Pi GPUI</span>  <span class="muted">Rust · GPUI · Metal</span>
    │
@@ -220,7 +220,7 @@ models · tools · extensions · your files</pre>
 
   <section id="tour" class="section tour reveal">
     <p class="mono eyebrow">Tour</p>
-    <h2>Real sessions. Fake startup.</h2>
+    <h2>More sessions, from an earlier build.</h2>
     <div class="tabs mono" role="tablist" data-tabs>
       <button role="tab" aria-selected="true" data-tab="0">Fix a bug</button>
       <button role="tab" aria-selected="false" data-tab="1">Answer a question</button>
@@ -278,8 +278,8 @@ models · tools · extensions · your files</pre>
       <p>A desktop app for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window.</p>
     </details>
     <details>
-      <summary>Is it an alternative to the Claude Code app?</summary>
-      <p>If you want a desktop app for coding with an agent, yes. pi is an open coding agent that works with Claude and other providers, and Pi GPUI gives it a native desktop window. Your models, extensions and skills stay the same.</p>
+      <summary>Can I use Claude models?</summary>
+      <p>Yes, if your pi is set up for them. pi works with Claude and other providers, and Pi GPUI runs your pi with its models, extensions and skills as they are.</p>
     </details>
     <details>
       <summary>Is it written in Rust?</summary>
@@ -291,7 +291,7 @@ models · tools · extensions · your files</pre>
     </details>
     <details>
       <summary>Which systems does it run on?</summary>
-      <p>macOS 13 or newer on Apple silicon. Releases are signed and notarized by Apple, so macOS opens them without a warning. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
+      <p>macOS 13 or newer on Apple silicon. Releases are signed with a Developer ID certificate and notarized by Apple. New versions arrive through GitHub releases, and the app offers "Restart to update" when one is ready.</p>
       <p>Linux and Windows aren't supported yet. Linux is planned: follow <a href="https://github.com/bytesbay/pi-gpui/issues/5" rel="noopener">issue #5</a> to hear when it ships.</p>
     </details>
     <details>
@@ -304,13 +304,13 @@ models · tools · extensions · your files</pre>
     <h2>Give pi a window.</h2>
     <div class="cta">
       <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">Download for macOS</a>
-      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
+      <a class="btn btn-ghost" href="https://github.com/bytesbay/pi-gpui" rel="noopener">Star on GitHub</a>
     </div>
   </section>
 </main>
 
 <footer class="footer mono">
-  <span>Pi GPUI · MIT licensed · signed and notarized by Apple</span>
+  <span>Pi GPUI · MIT licensed · notarized by Apple</span>
   <span>Made by <a class="author" href="https://miroslaw-shpak.dev" rel="author">Miroslaw Shpak</a></span>
   <span class="muted">Not affiliated with Anthropic. pi is made by its own authors.</span>
   <span class="footer-links">
