@@ -385,6 +385,8 @@ h3 { margin: 14px 0 8px; font-size: 18px; font-weight: 600; letter-spacing: -0.0
   color: var(--muted);
 }
 .footer a { color: var(--muted); }
+.footer a.author { color: var(--ink-strong); text-decoration: none; border-bottom: 1px solid var(--line-2); }
+.footer a.author:hover { border-color: var(--ink); }
 .footer-links { display: flex; gap: 16px; }
 
 /* Get started */
