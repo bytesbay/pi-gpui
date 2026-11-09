@@ -1,12 +1,14 @@
 # Pi GPUI
 
-A native desktop app for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, so your models, extensions, skills and sessions work as they do in the terminal. macOS for now; Linux is next.
+A native desktop app for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, with the same models, extensions, skills and sessions you use in the terminal. macOS for now; Linux is next.
 
-The app is 16 MB, its window is up in about 0.4 s, and it uses about 75 MB of memory at idle. Electron clients for pi take 0.5 to 1.1 s and 190 to 430 MB ([how this was measured](docs/BENCHMARKS.md)).
+The app is 16 MB, its window is up in about 0.4 s, and it uses about 75 MB of memory at idle. Electron clients for pi take 0.5 to 1.1 s and 190 to 430 MB. Measured on an M1 Pro with no projects open, counting each app's own processes ([method and script](docs/BENCHMARKS.md)).
 
 [Website](https://pi-gpui.dev) · [Download](https://github.com/bytesbay/pi-gpui/releases/latest) · [Plugins](docs/PLUGINS.md) · [中文](docs/README.zh-CN.md)
 
 ![Pi GPUI: sessions working in several projects, pi adding retries to a Rust client, and the change in the Changes panel](docs/demo.gif)
+
+<sub>Model replies in this recording are scripted so the take is repeatable. The app, the file edits and the `cargo test` run are real.</sub>
 
 ## Install
 
@@ -94,6 +96,7 @@ Tree navigation needs something pi's RPC lacks, so the app passes a small extens
 ## Known limits
 
 - A pi running in a terminal on the same session is not detected.
+- Extension status lines, widgets and window titles (`setStatus`, `setWidget`, `setTitle`) are not shown yet. Extension questions (`select`, `confirm`, `input`, `editor`) work.
 
 ## Development
 
