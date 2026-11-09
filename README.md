@@ -60,6 +60,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 | `⌘,` | Settings |
 | `⌘O` | Add project |
 | `⌘1` … `⌘9` | Open the n-th session (hold `⌘` to see numbers) |
+| `⌘⇧R` | Reload all open sessions (fresh pi: picks up updated pi, extensions, skills and settings) |
 | `⌘B` / `⌘R` | Show or hide the left / right panel |
 | `⌘⇧T` | Session tree |
 | `⌘⇧M` | Model and thinking level |

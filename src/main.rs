@@ -189,6 +189,7 @@ fn app_menus() -> Vec<Menu> {
             items: vec![
                 MenuItem::action("New Session", hub::NewChat),
                 MenuItem::action("Close Session", hub::CloseChat),
+                MenuItem::action("Reload All Sessions", hub::ReloadSessions),
                 MenuItem::action("Add Project…", hub::AddWorkspace),
             ],
         },

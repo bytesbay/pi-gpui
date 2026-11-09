@@ -48,7 +48,8 @@ actions!(
         ToggleLeftDock,
         ToggleRightDock,
         ToggleFiles,
-        ToggleChanges
+        ToggleChanges,
+        ReloadSessions
     ]
 );
 
@@ -83,6 +84,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-b", ToggleLeftDock, Some(KEY_CONTEXT)),
         KeyBinding::new("cmd-r", ToggleRightDock, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-r", ReloadSessions, Some(KEY_CONTEXT)),
     ]);
     cx.bind_keys((1..=9).map(|index| {
         KeyBinding::new(
@@ -275,6 +277,9 @@ pub struct HubView {
     _check_task: Task<()>,
     _prompt_task: Task<()>,
     _open_task: Task<()>,
+    /// Checking pi before every open session gets a fresh pi.
+    reloading_sessions: bool,
+    _reload_task: Task<()>,
     _save_task: Task<()>,
     animation: AnimationTicker,
 }
@@ -408,6 +413,8 @@ impl HubView {
             _check_task: Task::ready(()),
             _prompt_task: Task::ready(()),
             _open_task: Task::ready(()),
+            reloading_sessions: false,
+            _reload_task: Task::ready(()),
             _save_task: Task::ready(()),
             animation: AnimationTicker::default(),
         };
@@ -483,6 +490,91 @@ impl HubView {
             }
         })
         .detach();
+    }
+
+    fn open_chats(&self) -> Vec<Entity<ChatView>> {
+        self.workspaces
+            .iter()
+            .flat_map(|entry| entry.chats.iter().map(|chat| chat.view.clone()))
+            .collect()
+    }
+
+    /// ⌘⇧R: every open session gets a fresh pi, so updated pi, extensions,
+    /// skills and settings take effect without reopening each one.
+    fn reload_sessions(&mut self, _: &ReloadSessions, window: &mut Window, cx: &mut Context<Self>) {
+        let chats = self.open_chats();
+        if chats.is_empty() || self.reloading_sessions {
+            return;
+        }
+        let running = chats
+            .iter()
+            .filter(|chat| chat.read(cx).is_running())
+            .count();
+        if running == 0 {
+            self.restart_sessions(cx);
+            return;
+        }
+        let question = match running {
+            1 => "pi is working in a session. Reload anyway?".to_string(),
+            count => format!("pi is working in {count} sessions. Reload anyway?"),
+        };
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &question,
+            Some("Running work stops; the sessions themselves are saved."),
+            &["Reload", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await.ok() == Some(0) {
+                this.update(cx, |this, cx| this.restart_sessions(cx)).ok();
+            }
+        })
+        .detach();
+    }
+
+    /// Checks pi again (it may have been updated), then restarts each open
+    /// session with it.
+    fn restart_sessions(&mut self, cx: &mut Context<Self>) {
+        self.reloading_sessions = true;
+        let check = cx.background_spawn(async { pi::check_installation() });
+        self._reload_task = cx.spawn(async move |this, cx| {
+            let result = check.await;
+            this.update(cx, |this, cx| {
+                this.reloading_sessions = false;
+                match result {
+                    Ok(installation) => {
+                        eprintln!(
+                            "pi-gpui: reloading open sessions with pi {}",
+                            installation.version
+                        );
+                        let version = installation.version;
+                        AutoUpdater::global(cx)
+                            .update(cx, |updater, _| updater.set_pi_version(version));
+                        this.installation = InstallationState::Ready(installation.clone());
+                        let chats = this.open_chats();
+                        for chat in &chats {
+                            chat.update(cx, |chat, cx| chat.restart(installation.clone(), cx));
+                        }
+                        this.notice = Some((
+                            match chats.len() {
+                                1 => "Reloaded 1 session.".to_string(),
+                                count => format!("Reloaded {count} sessions."),
+                            },
+                            Color::Default,
+                        ));
+                        this.check_pi_updates(cx);
+                    }
+                    Err(error) => {
+                        eprintln!("pi-gpui: {error}");
+                        this.installation = InstallationState::Failed(error);
+                    }
+                }
+                cx.notify();
+            })
+            .ok();
+        });
+        cx.notify();
     }
 
     fn toggle_details(&mut self, _: &ToggleDetails, _: &mut Window, cx: &mut Context<Self>) {
@@ -1165,6 +1257,7 @@ impl HubView {
     fn sidebar_is_animating(&self, cx: &App) -> bool {
         matches!(self.installation, InstallationState::Checking)
             || self.pi_updating.is_some()
+            || self.reloading_sessions
             || self.opening_session.is_some()
             || self.plugins.read(cx).has_busy_status()
             || self.workspaces.iter().any(|entry| {
@@ -2910,7 +3003,7 @@ impl HubView {
                 this.pi_updating = None;
                 let open_sessions = this.workspaces.iter().any(|entry| !entry.chats.is_empty());
                 let reopen = if open_sessions {
-                    " Open sessions keep the previous version until you reopen them."
+                    " Open sessions keep the previous version until you reload them (⌘⇧R)."
                 } else {
                     ""
                 };
@@ -3409,6 +3502,19 @@ impl HubView {
                     .children(plugin_statuses)
                     .children(status)
                     .children(self.render_update_chip(cx))
+                    .when(
+                        !self.workspaces.iter().all(|entry| entry.chats.is_empty()),
+                        |this| {
+                            this.child(
+                                IconButton::new("reload-sessions", IconName::Refresh)
+                                    .loading(self.reloading_sessions)
+                                    .tooltip(Tooltip::with_keys("Reload all open sessions", "⌘⇧R"))
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.reload_sessions(&ReloadSessions, window, cx)
+                                    })),
+                            )
+                        },
+                    )
                     .when_some(self.active_chat.clone(), |this, chat| {
                         this.child(
                             IconButton::new("session-tree", IconName::ListTree)
@@ -3638,6 +3744,7 @@ impl Render for HubView {
             .on_action(cx.listener(Self::toggle_right_dock))
             .on_action(cx.listener(Self::toggle_files))
             .on_action(cx.listener(Self::toggle_changes))
+            .on_action(cx.listener(Self::reload_sessions))
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| {
                 let Some(side) = this.resizing_dock else {
                     return;

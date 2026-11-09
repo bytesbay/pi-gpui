@@ -576,6 +576,39 @@ impl ChatView {
             .unwrap_or_else(|| "New session".to_string())
     }
 
+    /// Starts a fresh pi for the same session, so it picks up updated pi,
+    /// extensions, skills and settings. The transcript is read again from
+    /// the session file; the composer keeps its text.
+    pub fn restart(&mut self, installation: Installation, cx: &mut Context<Self>) {
+        // Stop reading the old pi first: its exit must not show as a failure.
+        self._events_task = Task::ready(());
+        self.connection = Connection::Failed(String::new());
+        self.installation = installation;
+        self.fail_plugin_calls(cx);
+        // Restores the composer if a question was using it; the rows go anyway.
+        self.close_dialog(dialog::DialogState::Closed, &mut Vec::new(), cx);
+        self.queued_dialog_answer = None;
+        self.focused_view = None;
+        self.running = false;
+        self.pending_prompt = false;
+        self.switching_model = false;
+        self.forking = None;
+        self.forked = false;
+        self.compacting = false;
+        self.navigating = None;
+        self.tree = None;
+        self.model_picker = None;
+        self.rows.clear();
+        self.tool_rows.clear();
+        self.active_assistant = None;
+        self.markdown_cache.clear();
+        self.selection
+            .update(cx, |selection, cx| selection.clear(cx));
+        self.list_state.reset(0);
+        self.start_process(cx);
+        self.list_state.reset(self.rows.len());
+    }
+
     fn start_process(&mut self, cx: &mut Context<Self>) {
         // Replacing the task drops the previous pump before a new process starts.
         self._events_task = Task::ready(());
