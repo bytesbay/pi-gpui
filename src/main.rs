@@ -6,6 +6,7 @@ mod file_tree;
 mod highlight;
 mod hub;
 mod jsonl;
+mod keys;
 mod markdown;
 mod open_url;
 mod pi;
@@ -15,9 +16,12 @@ mod plugins;
 mod selectable;
 mod sessions;
 mod settings;
+#[cfg(not(target_os = "macos"))]
+mod single_instance;
 mod text_input;
 mod ui;
 mod updater;
+mod window_frame;
 
 use std::path::PathBuf;
 
@@ -37,33 +41,60 @@ actions!(
 );
 
 fn main() {
+    #[cfg(target_os = "macos")]
     migrate_data_directory();
+    if matches!(std::env::args().nth(1).as_deref(), Some("--version" | "-V")) {
+        println!("pi-gpui {}", env!("CARGO_PKG_VERSION"));
+        return;
+    }
     // Release tooling: the pi versions this build supports, as JSON.
     if std::env::args().nth(1).as_deref() == Some("--pi-compat") {
         println!("{}", pi::compatibility_json());
         return;
     }
-    // Usage: pi-gpui [workspace]. The workspace is added to the sidebar and
-    // a new session is opened in it.
-    let initial_workspace =
-        std::env::args_os()
-            .nth(1)
-            .map(PathBuf::from)
-            .map(|path| match path.canonicalize() {
-                Ok(path) if path.is_dir() => path,
-                Ok(path) => {
-                    eprintln!("pi-gpui: {} is not a directory", path.display());
-                    std::process::exit(1);
-                }
-                Err(error) => {
-                    eprintln!("pi-gpui: {}: {error}", path.display());
-                    std::process::exit(1);
-                }
-            });
+    // Usage: pi-gpui [workspace | pi-gpui://link]. A workspace is added to
+    // the sidebar and a new session is opened in it. Linux link handlers pass
+    // the link as the argument (resources/pi-gpui.desktop).
+    let initial_link = std::env::args()
+        .nth(1)
+        .filter(|argument| argument.starts_with("pi-gpui:"));
+    let initial_workspace = std::env::args_os()
+        .nth(1)
+        .filter(|_| initial_link.is_none())
+        .map(PathBuf::from)
+        .map(|path| match path.canonicalize() {
+            Ok(path) if path.is_dir() => path,
+            Ok(path) => {
+                eprintln!("pi-gpui: {} is not a directory", path.display());
+                std::process::exit(1);
+            }
+            Err(error) => {
+                eprintln!("pi-gpui: {}: {error}", path.display());
+                std::process::exit(1);
+            }
+        });
 
     // pi-gpui:// links (Info.plist registers the scheme). macOS can deliver
     // them before the window exists, so they wait in a channel.
     let (url_sender, mut url_receiver) = futures::channel::mpsc::unbounded::<Vec<String>>();
+    #[cfg(not(target_os = "macos"))]
+    {
+        let message = match (&initial_link, &initial_workspace) {
+            (Some(link), _) => link.clone(),
+            (None, Some(workspace)) => open_url::workspace_link(workspace),
+            (None, None) => single_instance::ACTIVATE.to_string(),
+        };
+        if single_instance::forward(&message) {
+            return;
+        }
+        let sender = url_sender.clone();
+        single_instance::listen(move |message| {
+            sender.unbounded_send(vec![message]).ok();
+        });
+    }
+    if let Some(link) = &initial_link {
+        url_sender.unbounded_send(vec![link.clone()]).ok();
+    }
     let app = Application::new().with_assets(Assets);
     app.on_open_urls(move |urls| {
         url_sender.unbounded_send(urls).ok();
@@ -74,8 +105,9 @@ fn main() {
         chat::bind_keys(cx);
         file_tree::bind_keys(cx);
         hub::bind_keys(cx);
+        cx.bind_keys([KeyBinding::new(&crate::keys::binding("cmd-q"), Quit, None)]);
+        #[cfg(target_os = "macos")]
         cx.bind_keys([
-            KeyBinding::new("cmd-q", Quit, None),
             KeyBinding::new("cmd-h", Hide, None),
             KeyBinding::new("alt-cmd-h", HideOthers, None),
         ]);
@@ -108,6 +140,11 @@ fn main() {
                 appears_transparent: true,
                 traffic_light_position: Some(point(px(12.), px(11.))),
             }),
+            // Linux: draw the frame ourselves where the compositor allows it
+            // (window_frame.rs); app_id matches the .desktop file for the icon.
+            window_decorations: (!cfg!(target_os = "macos"))
+                .then_some(gpui::WindowDecorations::Client),
+            app_id: Some("pi-gpui".into()),
             ..Default::default()
         };
 
@@ -133,7 +170,8 @@ fn main() {
         cx.spawn(async move |cx| {
             while let Some(urls) = url_receiver.next().await {
                 let opened = window.update(cx, |view, window, cx| {
-                    for url in &urls {
+                    // "activate" (single_instance.rs) only brings the window forward.
+                    for url in urls.iter().filter(|url| url.as_str() != "activate") {
                         view.open_url(url, cx);
                     }
                     window.activate_window();
@@ -149,6 +187,7 @@ fn main() {
 }
 
 /// The app was called "Pi GPU UI" before; keep its projects and settings.
+#[cfg(target_os = "macos")]
 fn migrate_data_directory() {
     let Some(home) = sessions::home_directory() else {
         return;

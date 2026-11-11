@@ -205,7 +205,10 @@ pub struct KeyHint {
 
 impl KeyHint {
     pub fn new(keys: impl Into<SharedString>) -> Self {
-        Self { keys: keys.into() }
+        let keys: SharedString = keys.into();
+        Self {
+            keys: crate::keys::label(&keys).into(),
+        }
     }
 }
 

@@ -1,4 +1,5 @@
-//! Window behavior gpui 0.2.2 does not provide on macOS.
+//! Platform pieces gpui 0.2.2 does not provide: AppKit calls on macOS, the
+//! freedesktop equivalents on Linux.
 
 // `objc` 0.2 macros probe a `cargo-clippy` feature that modern rustc flags.
 #![allow(unexpected_cfgs)]
@@ -120,9 +121,124 @@ pub fn move_to_trash(path: &std::path::Path) -> Result<(), String> {
     }
 }
 
+/// `gio trash` (GLib, on GNOME and most other desktops), then `kioclient`
+/// (KDE), then `trash-put` (trash-cli). Never deletes for good: without any of
+/// them the file stays where it is.
 #[cfg(not(target_os = "macos"))]
 pub fn move_to_trash(path: &std::path::Path) -> Result<(), String> {
-    std::fs::remove_file(path).map_err(|error| error.to_string())
+    use std::process::Command;
+
+    let attempts: [(&str, &[&str]); 3] = [
+        ("gio", &["trash", "--"]),
+        ("kioclient", &["move"]),
+        ("trash-put", &["--"]),
+    ];
+    for (program, args) in attempts {
+        let mut command = Command::new(program);
+        command.args(args).arg(path);
+        if program == "kioclient" {
+            command.arg("trash:/");
+        }
+        match command.output() {
+            Ok(output) if output.status.success() => return Ok(()),
+            Ok(output) => {
+                let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                return Err(if message.is_empty() {
+                    "the file could not be moved to the Trash".to_string()
+                } else {
+                    message
+                });
+            }
+            Err(_) => continue,
+        }
+    }
+    Err("no trash tool found (install gio, kioclient or trash-cli)".to_string())
+}
+
+/// Shows the file in Finder, or in the file manager on Linux.
+pub fn reveal_in_file_manager(path: &std::path::Path) {
+    use std::process::Command;
+
+    let result = if cfg!(target_os = "macos") {
+        Command::new("open").arg("-R").arg(path).spawn().map(drop)
+    } else {
+        // The freedesktop FileManager1 interface selects the file (Nautilus,
+        // Dolphin, Nemo, Thunar…); otherwise just open its folder.
+        let uri = file_uri(path);
+        let selected = Command::new("gdbus")
+            .args([
+                "call",
+                "--session",
+                "--dest",
+                "org.freedesktop.FileManager1",
+                "--object-path",
+                "/org/freedesktop/FileManager1",
+                "--method",
+                "org.freedesktop.FileManager1.ShowItems",
+            ])
+            .arg(format!("['{}']", uri.replace('\'', "%27")))
+            .arg("")
+            .output()
+            .is_ok_and(|output| output.status.success());
+        if selected {
+            Ok(())
+        } else {
+            let folder = path.parent().unwrap_or(path);
+            Command::new("xdg-open").arg(folder).spawn().map(drop)
+        }
+    };
+    if let Err(error) = result {
+        eprintln!("pi-gpui: could not reveal {}: {error}", path.display());
+    }
+}
+
+/// Opens a file in Zed when it is installed, otherwise in the default editor.
+pub fn open_in_editor(path: &std::path::Path) {
+    use std::process::Command;
+
+    let result = if cfg!(target_os = "macos") {
+        let zed = std::path::Path::new("/Applications/Zed.app");
+        let mut command = Command::new("open");
+        if zed.exists() {
+            command.arg("-a").arg(zed);
+        } else {
+            command.arg("-t");
+        }
+        command.arg(path).spawn().map(drop)
+    } else {
+        // Zed's CLI is `zed`, or `zeditor` in some distributions' packages.
+        match ["zed", "zeditor"]
+            .into_iter()
+            .find(|program| on_path(program))
+        {
+            Some(zed) => Command::new(zed).arg(path).spawn().map(drop),
+            None => Command::new("xdg-open").arg(path).spawn().map(drop),
+        }
+    };
+    if let Err(error) = result {
+        eprintln!("pi-gpui: could not open {}: {error}", path.display());
+    }
+}
+
+fn on_path(program: &str) -> bool {
+    std::env::var_os("PATH").is_some_and(|paths| {
+        std::env::split_paths(&paths).any(|directory| directory.join(program).is_file())
+    })
+}
+
+/// `file://` URI with the bytes that need it percent-encoded.
+fn file_uri(path: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let mut uri = String::from("file://");
+    for &byte in path.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            uri.push(byte as char);
+        } else {
+            uri.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    uri
 }
 
 /// Files copied in Finder (file URLs on the general pasteboard).

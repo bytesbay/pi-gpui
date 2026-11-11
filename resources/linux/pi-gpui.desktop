@@ -1,0 +1,14 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Pi GPUI
+GenericName=Coding Agent
+Comment=Native GUI for the pi coding agent
+Exec=pi-gpui %u
+Icon=pi-gpui
+Terminal=false
+Categories=Development;
+Keywords=pi;agent;coding;ai;
+StartupNotify=true
+StartupWMClass=pi-gpui
+MimeType=x-scheme-handler/pi-gpui;

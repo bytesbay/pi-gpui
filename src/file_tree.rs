@@ -521,13 +521,20 @@ impl FilesPanel {
         };
         let reveal = {
             let path = path.clone();
-            item("file-menu-reveal", IconName::FolderOpen, "Reveal in Finder").on_click(
-                cx.listener(move |this, _, _, cx| {
-                    this.menu = None;
-                    reveal_in_finder(&path);
-                    cx.notify();
-                }),
+            item(
+                "file-menu-reveal",
+                IconName::FolderOpen,
+                if cfg!(target_os = "macos") {
+                    "Reveal in Finder"
+                } else {
+                    "Show in File Manager"
+                },
             )
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.menu = None;
+                crate::platform::reveal_in_file_manager(&path);
+                cx.notify();
+            }))
         };
         let copy = item("file-menu-copy", IconName::Copy, "Copy relative path").on_click(
             cx.listener(move |this, _, _, cx| {
@@ -792,12 +799,6 @@ fn parse_status(output: &str, root: &Path) -> GitState {
         }
     }
     state
-}
-
-fn reveal_in_finder(path: &Path) {
-    if let Err(error) = Command::new("open").arg("-R").arg(path).spawn() {
-        eprintln!("pi-gpui: could not reveal {}: {error}", path.display());
-    }
 }
 
 #[cfg(test)]

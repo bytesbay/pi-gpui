@@ -12,7 +12,7 @@ use gpui::{
     AnyElement, AnyView, App, ClickEvent, Context, ElementId, Entity, FocusHandle, Focusable,
     FontWeight, KeyBinding, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     Pixels, Point, SharedString, StyleRefinement, Subscription, Task, Window, WindowControlArea,
-    actions, anchored, deferred, div, px,
+    actions, anchored, deferred, div, point, px,
 };
 use serde_json::{Value, json};
 
@@ -74,21 +74,50 @@ const TRAFFIC_LIGHT_PADDING: f32 = 84.;
 
 pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("cmd-o", AddWorkspace, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-n", NewChat, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-w", CloseChat, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-shift-e", ToggleDetails, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-o"),
+            AddWorkspace,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(&crate::keys::binding("cmd-n"), NewChat, Some(KEY_CONTEXT)),
+        KeyBinding::new(&crate::keys::binding("cmd-w"), CloseChat, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-e"),
+            ToggleDetails,
+            Some(KEY_CONTEXT),
+        ),
         KeyBinding::new("escape", CancelRename, Some(RENAME_CONTEXT)),
-        KeyBinding::new("cmd-,", OpenSettings, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-,"),
+            OpenSettings,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-b"),
+            ToggleLeftDock,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-r"),
+            ToggleRightDock,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-r"),
+            ReloadSessions,
+            Some(KEY_CONTEXT),
+        ),
+    ]);
+    #[cfg(target_os = "macos")]
+    cx.bind_keys([
         KeyBinding::new("cmd-m", Minimize, Some(KEY_CONTEXT)),
         KeyBinding::new("ctrl-cmd-f", ToggleFullScreen, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-b", ToggleLeftDock, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-r", ToggleRightDock, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-shift-r", ReloadSessions, Some(KEY_CONTEXT)),
     ]);
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([KeyBinding::new("f11", ToggleFullScreen, Some(KEY_CONTEXT))]);
     cx.bind_keys((1..=9).map(|index| {
         KeyBinding::new(
-            &format!("cmd-{index}"),
+            &crate::keys::binding(&format!("cmd-{index}")),
             SelectSession { index },
             Some(KEY_CONTEXT),
         )
@@ -275,6 +304,9 @@ pub struct HubView {
     /// Workspaces whose hidden sessions are shown for now.
     show_hidden: HashSet<PathBuf>,
     session_menu: Option<SessionMenu>,
+    /// Linux has no menu bar: Settings, updates and Quit live in this menu,
+    /// opened from the title bar. Holds where it opens.
+    app_menu: Option<Point<Pixels>>,
     renaming: Option<Renaming>,
     /// Sessions being renamed through a short-lived pi process.
     renaming_sessions: HashSet<PathBuf>,
@@ -320,9 +352,11 @@ impl HubView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        // "theme": "system" follows macOS light and dark mode.
-        cx.observe_window_appearance(window, |_, _, cx| settings::apply_theme(cx))
-            .detach();
+        // "theme": "system" follows the system light and dark mode.
+        cx.observe_window_appearance(window, |_, window, cx| {
+            settings::apply_theme_for(window.appearance(), cx)
+        })
+        .detach();
         // The page shows the current values; refresh fields not being edited.
         cx.observe_global::<Settings>(|this: &mut Self, cx| {
             if let Some(page) = &this.settings_page {
@@ -421,6 +455,7 @@ impl HubView {
             hidden_sessions: HashSet::new(),
             show_hidden: HashSet::new(),
             session_menu: None,
+            app_menu: None,
             renaming: None,
             renaming_sessions: HashSet::new(),
             command_held: false,
@@ -1738,6 +1773,76 @@ impl HubView {
         .into_any_element()
     }
 
+    /// What the macOS menu bar holds, for platforms without one.
+    fn render_app_menu(&self, position: Point<Pixels>, cx: &mut Context<Self>) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let item = |id: &'static str, label: &'static str, keys: Option<&'static str>| {
+            h_flex()
+                .id(id)
+                .h(px(28.))
+                .px(px(8.))
+                .gap(px(8.))
+                .rounded(px(5.))
+                .cursor_pointer()
+                .hover(|style| style.bg(colors.element_hover))
+                .child(
+                    div()
+                        .flex_1()
+                        .child(Label::new(label).size(LabelSize::Small)),
+                )
+                .children(keys.map(KeyHint::new))
+        };
+        let settings = item("app-menu-settings", "Settings", Some("⌘,")).on_click(cx.listener(
+            |this, _, window, cx| {
+                this.app_menu = None;
+                this.open_settings(&OpenSettings, window, cx);
+            },
+        ));
+        let updates = item("app-menu-updates", "Check for Updates", None).on_click(cx.listener(
+            |this, _, _, cx| {
+                this.app_menu = None;
+                AutoUpdater::global(cx).update(cx, |updater, cx| updater.check(true, cx));
+                cx.notify();
+            },
+        ));
+        let about = item("app-menu-about", "About Pi GPUI", None).on_click(cx.listener(
+            |this, _, _, cx| {
+                this.app_menu = None;
+                cx.open_url("https://github.com/bytesbay/pi-gpui");
+                cx.notify();
+            },
+        ));
+        let quit = item("app-menu-quit", "Quit", Some("⌘Q")).on_click(|_, _, cx| cx.quit());
+        deferred(
+            anchored()
+                .position(position)
+                .anchor(gpui::Corner::TopRight)
+                .child(
+                    v_flex()
+                        .id("app-menu")
+                        .w(px(220.))
+                        .p(px(4.))
+                        .rounded(px(8.))
+                        .border_1()
+                        .border_color(colors.border)
+                        .bg(colors.elevated_surface_background)
+                        .shadow_lg()
+                        .occlude()
+                        .on_mouse_down_out(cx.listener(|this, _, _, cx| {
+                            this.app_menu = None;
+                            cx.notify();
+                        }))
+                        .child(settings)
+                        .child(updates)
+                        .child(about)
+                        .child(div().my(px(4.)).h(px(1.)).bg(colors.border_variant))
+                        .child(quit),
+                ),
+        )
+        .with_priority(1)
+        .into_any_element()
+    }
+
     fn move_panel(&mut self, kind: PanelKind, to: DockSide, cx: &mut Context<Self>) {
         self.docks.move_panel(kind, to);
         self.save(cx);
@@ -2730,7 +2835,7 @@ impl HubView {
             pi::CheckError::NotFound => {
                 body.push(command(
                     "copy-installer",
-                    "Installer (macOS)",
+                    "Installer",
                     "curl -fsSL https://pi.dev/install.sh | sh".to_string(),
                 ));
                 body.push(command(
@@ -3099,13 +3204,13 @@ impl HubView {
                     .child(group("Appearance"))
                     .child(row(
                         "Theme",
-                        "System follows the macOS appearance and switches between the two Ayu themes.",
+                        "System follows the system light or dark mode and switches between the two Ayu themes.",
                         theme_control,
                     ))
                     .child(group("Fonts"))
                     .child(row(
                         "Interface font",
-                        "Font family of the whole interface. \".SystemUIFont\" is the macOS system font.",
+                        "Font family of the whole interface. \".SystemUIFont\" is the system font.",
                         field("ui_font_family", &page.ui_font, cx),
                     ))
                     .child(row(
@@ -3187,9 +3292,11 @@ impl HubView {
                 this.pi_updating = None;
                 let open_sessions = this.workspaces.iter().any(|entry| !entry.chats.is_empty());
                 let reopen = if open_sessions {
-                    " Open sessions keep the previous version until you reload them (⌘⇧R)."
+                    crate::keys::in_text(
+                        " Open sessions keep the previous version until you reload them (⌘⇧R).",
+                    )
                 } else {
-                    ""
+                    String::new()
                 };
                 if result.is_ok() {
                     // Drop what was just updated right away; the re-check
@@ -3661,11 +3768,21 @@ impl HubView {
                     platform::start_window_drag(window);
                 }
             }))
-            // Double-click follows the user's macOS setting (zoom or minimize).
+            // Double-click follows the user's macOS setting (zoom or minimize);
+            // on Linux it maximizes, and a right click opens the window menu.
             .on_click(|event, window, _| {
                 if event.click_count() >= 2 {
-                    window.titlebar_double_click();
+                    if cfg!(target_os = "macos") {
+                        window.titlebar_double_click();
+                    } else {
+                        window.zoom_window();
+                    }
                 }
+            })
+            .when(!cfg!(target_os = "macos"), |this| {
+                this.on_mouse_down(MouseButton::Right, |event, window, _| {
+                    window.show_window_menu(event.position)
+                })
             })
             .child(
                 h_flex()
@@ -3673,12 +3790,14 @@ impl HubView {
                     .min_w(px(0.))
                     .h_full()
                     // The breadcrumb starts right after the traffic lights,
-                    // which are hidden in full screen.
-                    .pl(px(if window.is_fullscreen() {
-                        12.
-                    } else {
-                        TRAFFIC_LIGHT_PADDING
-                    }))
+                    // which are hidden in full screen (and absent on Linux).
+                    .pl(px(
+                        if window.is_fullscreen() || !cfg!(target_os = "macos") {
+                            12.
+                        } else {
+                            TRAFFIC_LIGHT_PADDING
+                        },
+                    ))
                     .pr(px(10.))
                     .gap(px(12.))
                     .children(self.render_dock_toggle(DockSide::Left, cx))
@@ -3730,7 +3849,22 @@ impl HubView {
                             this.toggle_details(&ToggleDetails, window, cx)
                         }))
                     })
-                    .children(self.render_dock_toggle(DockSide::Right, cx)),
+                    .children(self.render_dock_toggle(DockSide::Right, cx))
+                    .when(!cfg!(target_os = "macos"), |this| {
+                        this.child(
+                            IconButton::new("app-menu", IconName::Ellipsis)
+                                .toggle_state(self.app_menu.is_some())
+                                .tooltip(Tooltip::text("Settings and more"))
+                                .on_click(cx.listener(|this, event: &ClickEvent, _, cx| {
+                                    // Below the button, right edges roughly aligned.
+                                    let click = event.position();
+                                    this.app_menu =
+                                        Some(point(click.x + px(14.), click.y + px(18.)));
+                                    cx.notify();
+                                })),
+                        )
+                    })
+                    .children(render_window_controls(window)),
             )
     }
 
@@ -3914,7 +4048,7 @@ impl Render for HubView {
             }
         };
 
-        v_flex()
+        let content = v_flex()
             .key_context(KEY_CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::prompt_add_workspace))
@@ -3958,10 +4092,14 @@ impl Render for HubView {
             .on_action(|_: &Zoom, window, _| window.zoom_window())
             .on_action(|_: &ToggleFullScreen, window, _| window.toggle_fullscreen())
             .on_modifiers_changed(cx.listener(|this, event: &ModifiersChangedEvent, _, cx| {
-                let held = event.modifiers.platform
-                    && !event.modifiers.shift
-                    && !event.modifiers.alt
-                    && !event.modifiers.control;
+                // ⌘ on macOS, Ctrl elsewhere, and nothing else held.
+                let modifiers = &event.modifiers;
+                let other = if cfg!(target_os = "macos") {
+                    modifiers.control
+                } else {
+                    modifiers.platform
+                };
+                let held = modifiers.secondary() && !modifiers.shift && !modifiers.alt && !other;
                 if held != this.command_held {
                     this.command_held = held;
                     cx.notify();
@@ -4001,7 +4139,62 @@ impl Render for HubView {
                     .as_ref()
                     .map(|menu| self.render_panel_menu(menu, cx)),
             )
+            .children(
+                self.app_menu
+                    .map(|position| self.render_app_menu(position, cx)),
+            );
+        crate::window_frame::decorate(content, window, cx)
     }
+}
+
+/// Minimize, maximize and close, when the app draws its own frame (Linux
+/// without server-side decorations). The window manager draws them otherwise.
+fn render_window_controls(window: &Window) -> Option<AnyElement> {
+    if !matches!(
+        window.window_decorations(),
+        gpui::Decorations::Client { .. }
+    ) {
+        return None;
+    }
+    let controls = window.window_controls();
+    let maximized = window.is_maximized();
+    Some(
+        h_flex()
+            .flex_none()
+            .gap(px(4.))
+            .ml(px(4.))
+            .when(controls.minimize, |this| {
+                this.child(
+                    IconButton::new("window-minimize", IconName::Dash)
+                        .tooltip(Tooltip::text("Minimize"))
+                        .on_click(|_, window, _| window.minimize_window()),
+                )
+            })
+            .when(controls.maximize, |this| {
+                this.child(
+                    IconButton::new(
+                        "window-maximize",
+                        if maximized {
+                            IconName::Restore
+                        } else {
+                            IconName::Maximize
+                        },
+                    )
+                    .tooltip(Tooltip::text(if maximized {
+                        "Restore"
+                    } else {
+                        "Maximize"
+                    }))
+                    .on_click(|_, window, _| window.zoom_window()),
+                )
+            })
+            .child(
+                IconButton::new("window-close", IconName::Close)
+                    .tooltip(Tooltip::text("Close"))
+                    .on_click(|_, window, _| window.remove_window()),
+            )
+            .into_any_element(),
+    )
 }
 
 struct PanelMenu {
@@ -4017,16 +4210,10 @@ fn load_docks(path: &Path) -> Docks {
         .unwrap_or_default()
 }
 
-/// `~/Library/Application Support/pi-gpui/state.json` on macOS. App data
-/// lives apart from pi's own files, as the principles require.
+/// `state.json` in the app data directory. App data lives apart from pi's own
+/// files, as the principles require.
 fn state_file_path() -> Option<PathBuf> {
-    let home = sessions::home_directory()?;
-    let directory = if cfg!(target_os = "macos") {
-        home.join("Library/Application Support/pi-gpui")
-    } else {
-        home.join(".config/pi-gpui")
-    };
-    Some(directory.join("state.json"))
+    Some(sessions::app_data_directory()?.join("state.json"))
 }
 
 fn load_state(path: &Path) -> Vec<(PathBuf, bool)> {
@@ -4084,16 +4271,4 @@ fn write_atomically(path: &Path, value: &Value) -> Result<(), String> {
     fs::rename(&temporary, path).map_err(|error| error.to_string())
 }
 
-/// Opens a file in Zed when it is installed, otherwise in the default text editor.
-pub(crate) fn open_in_editor(path: &Path) {
-    let zed = Path::new("/Applications/Zed.app");
-    let mut command = std::process::Command::new("open");
-    if zed.exists() {
-        command.arg("-a").arg(zed);
-    } else {
-        command.arg("-t");
-    }
-    if let Err(error) = command.arg(path).spawn() {
-        eprintln!("pi-gpui: could not open {}: {error}", path.display());
-    }
-}
+pub(crate) use crate::platform::open_in_editor;

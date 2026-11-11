@@ -33,6 +33,23 @@ pub fn parse(url: &str) -> Option<OpenRequest> {
     })
 }
 
+/// `pi-gpui://open?workspace=<dir>` for a project folder.
+/// Linux only: a second launch hands its folder to the running app.
+#[cfg_attr(target_os = "macos", allow(dead_code))]
+pub fn workspace_link(workspace: &std::path::Path) -> String {
+    use std::os::unix::ffi::OsStrExt as _;
+
+    let mut link = String::from("pi-gpui://open?workspace=");
+    for &byte in workspace.as_os_str().as_bytes() {
+        if byte.is_ascii_alphanumeric() || b"/-._~".contains(&byte) {
+            link.push(byte as char);
+        } else {
+            link.push_str(&format!("%{byte:02X}"));
+        }
+    }
+    link
+}
+
 fn percent_decode(value: &str) -> String {
     let bytes = value.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -66,6 +83,12 @@ mod tests {
         .unwrap();
         assert_eq!(request.workspace, "/Users/me/my app");
         assert_eq!(request.session.as_deref(), Some("/tmp/séance.jsonl"));
+    }
+
+    #[test]
+    fn workspace_links_round_trip() {
+        let link = workspace_link(std::path::Path::new("/home/me/my app+1"));
+        assert_eq!(parse(&link).unwrap().workspace, "/home/me/my app+1");
     }
 
     #[test]

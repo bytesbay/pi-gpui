@@ -25,13 +25,13 @@ const POLL_INTERVAL: Duration = Duration::from_secs(1);
 const DEFAULT_FILE: &str = r#"// Pi GPUI settings.
 //
 // This file is the source of truth: the app applies changes as soon as it is
-// saved, and the Settings page (Pi GPUI > Settings…, ⌘,) writes here too.
+// saved, and the Settings page (⌘, or Ctrl+,) writes here too.
 // Comments and trailing commas are allowed.
 {
-  // "system" follows macOS, or pick a theme: "Ayu Dark", "Ayu Light".
+  // "system" follows the system light or dark mode, or pick a theme: "Ayu Dark", "Ayu Light".
   "theme": "system",
 
-  // Font of the interface. ".SystemUIFont" is the macOS system font.
+  // Font of the interface. ".SystemUIFont" is the system font.
   "ui_font_family": ".SystemUIFont",
 
   // Text size of messages and answers, in pixels.
@@ -125,9 +125,9 @@ pub struct SettingsFile {
 impl Global for SettingsFile {}
 
 pub fn path() -> PathBuf {
-    crate::sessions::home_directory()
+    crate::sessions::app_data_directory()
         .unwrap_or_default()
-        .join("Library/Application Support/pi-gpui/settings.json")
+        .join("settings.json")
 }
 
 /// JetBrains Mono NL ships inside the app (SIL Open Font License 1.1, see
@@ -232,8 +232,14 @@ fn reload_if_changed(cx: &mut App) {
 
 /// Sets the theme global from the setting and the macOS appearance.
 pub fn apply_theme(cx: &mut App) {
+    apply_theme_for(cx.window_appearance(), cx);
+}
+
+/// Inside `observe_window_appearance` pass `window.appearance()`: asking the
+/// platform again from that callback panics on X11 (its client is borrowed).
+pub fn apply_theme_for(appearance: gpui::WindowAppearance, cx: &mut App) {
     let system_is_dark = matches!(
-        cx.window_appearance(),
+        appearance,
         gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
     );
     let dark = match Settings::get(cx).theme.as_str() {
@@ -473,7 +479,7 @@ mod tests {
     fn setting_a_value_keeps_comments_and_other_keys() {
         let updated = set_top_level_value(DEFAULT_FILE, "theme", &json!("Ayu Light"));
         assert!(updated.contains(r#""theme": "Ayu Light""#));
-        assert!(updated.contains("// \"system\" follows macOS"));
+        assert!(updated.contains("// \"system\" follows the system"));
         assert_eq!(parse(&updated).unwrap().theme, THEME_LIGHT);
 
         let sized = set_top_level_value(&updated, "agent_font_size", &json!(16));

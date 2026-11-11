@@ -246,7 +246,7 @@ impl PluginRegistry {
             for command in &parsed.commands {
                 if let Some(keys) = &command.keybinding {
                     bindings.push(KeyBinding::new(
-                        keys,
+                        &crate::keys::binding(keys),
                         RunPluginCommand {
                             command: command.id.clone(),
                         },
@@ -1008,20 +1008,22 @@ fn discover_plugins() -> Vec<Result<(PathBuf, ParsedManifest), String>> {
 }
 
 /// User plugins first, then built-in ones: `Contents/Resources/plugins` in
-/// the app bundle, or the repository's `plugins/` when run from a build.
+/// the macOS app bundle, `share/pi-gpui/plugins` next to `bin/` in a Linux
+/// install, or the repository's `plugins/` when run from a build.
 fn plugin_directories() -> Vec<PathBuf> {
     let mut directories = Vec::new();
-    if let Some(home) = sessions::home_directory() {
-        directories.push(if cfg!(target_os = "macos") {
-            home.join("Library/Application Support/pi-gpui/plugins")
-        } else {
-            home.join(".config/pi-gpui/plugins")
-        });
+    if let Some(data) = sessions::app_data_directory() {
+        directories.push(data.join("plugins"));
     }
     let bundled = std::env::current_exe().ok().and_then(|executable| {
         let contents = executable.parent()?.parent()?;
-        let resources = contents.join("Resources/plugins");
-        (contents.file_name()? == "Contents" && resources.is_dir()).then_some(resources)
+        if cfg!(target_os = "macos") {
+            let resources = contents.join("Resources/plugins");
+            (contents.file_name()? == "Contents" && resources.is_dir()).then_some(resources)
+        } else {
+            let share = contents.join("share/pi-gpui/plugins");
+            share.is_dir().then_some(share)
+        }
     });
     directories.push(
         bundled.unwrap_or_else(|| PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/plugins"))),

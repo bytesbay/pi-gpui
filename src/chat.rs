@@ -90,25 +90,53 @@ pub fn bind_keys(cx: &mut App) {
     cx.bind_keys([
         KeyBinding::new("enter", Submit, Some(text_input::KEY_CONTEXT)),
         KeyBinding::new("escape", CancelRun, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-shift-m", ToggleModelPicker, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-m"),
+            ToggleModelPicker,
+            Some(KEY_CONTEXT),
+        ),
         // Text selected in the transcript; the composer has its own cmd-c.
-        KeyBinding::new("cmd-c", CopySelection, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-c"),
+            CopySelection,
+            Some(KEY_CONTEXT),
+        ),
         KeyBinding::new("escape", DismissModelPicker, Some(MODEL_PICKER_CONTEXT)),
-        KeyBinding::new("cmd-shift-t", ToggleTree, Some(KEY_CONTEXT)),
-        KeyBinding::new("cmd-shift-c", Compact, Some(KEY_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-t"),
+            ToggleTree,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-c"),
+            Compact,
+            Some(KEY_CONTEXT),
+        ),
         KeyBinding::new("up", TreeUp, Some(TREE_CONTEXT)),
         KeyBinding::new("k", TreeUp, Some(TREE_CONTEXT)),
         KeyBinding::new("down", TreeDown, Some(TREE_CONTEXT)),
         KeyBinding::new("j", TreeDown, Some(TREE_CONTEXT)),
-        KeyBinding::new("cmd-up", TreeFirst, Some(TREE_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-up"),
+            TreeFirst,
+            Some(TREE_CONTEXT),
+        ),
         KeyBinding::new("home", TreeFirst, Some(TREE_CONTEXT)),
-        KeyBinding::new("cmd-down", TreeLast, Some(TREE_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-down"),
+            TreeLast,
+            Some(TREE_CONTEXT),
+        ),
         KeyBinding::new("end", TreeLast, Some(TREE_CONTEXT)),
         KeyBinding::new("left", TreePreviousBranch, Some(TREE_CONTEXT)),
         KeyBinding::new("right", TreeNextBranch, Some(TREE_CONTEXT)),
         KeyBinding::new("enter", TreeGo, Some(TREE_CONTEXT)),
         KeyBinding::new("alt-enter", TreeGoWithSummary, Some(TREE_CONTEXT)),
-        KeyBinding::new("cmd-enter", TreeFork, Some(TREE_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-enter"),
+            TreeFork,
+            Some(TREE_CONTEXT),
+        ),
         KeyBinding::new("escape", TreeClose, Some(TREE_CONTEXT)),
         KeyBinding::new("up", SlashUp, Some(SLASH_CONTEXT)),
         KeyBinding::new("down", SlashDown, Some(SLASH_CONTEXT)),
@@ -125,6 +153,13 @@ pub fn bind_keys(cx: &mut App) {
         ),
         KeyBinding::new("escape", PromptCancel, Some(plugin_prompt::PROMPT_CONTEXT)),
     ]);
+    // The terminal's copy shortcut on Linux; compact is Ctrl+Alt+C there (keys.rs).
+    #[cfg(not(target_os = "macos"))]
+    cx.bind_keys([KeyBinding::new(
+        "ctrl-shift-c",
+        CopySelection,
+        Some(KEY_CONTEXT),
+    )]);
 }
 
 /// Whether step details (thought text, tool output) start expanded, for all

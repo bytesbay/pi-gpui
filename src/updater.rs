@@ -5,9 +5,11 @@
 //! the pi versions it supports. The updater offers the newest release that
 //! supports the installed pi; pi itself is never updated by the app.
 //!
-//! Network and file work runs in background threads through macOS tools that
-//! are always present (`curl`, `ditto`, `plutil`), so no HTTP stack is linked.
-//! Updates only run from an app bundle; development builds never check.
+//! Network and file work runs in background threads through tools that are
+//! always present (`curl`, plus `ditto` and `plutil` on macOS, `tar` on
+//! Linux), so no HTTP stack is linked. Updates only run from an installed app
+//! (`Pi GPUI.app` on macOS, `pi-gpui.app/` from the tarball on Linux);
+//! development builds never check.
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -131,8 +133,7 @@ impl AutoUpdater {
         let Some(bundle) = self.bundle.clone() else {
             if manual {
                 self.manual_result = Some(UpdateStatus::Failed(
-                    "updates work in the app bundle (script/bundle.sh), not in a development build"
-                        .to_string(),
+                    "updates work in the installed app, not in a development build".to_string(),
                 ));
                 cx.notify();
             }
@@ -205,11 +206,15 @@ impl AutoUpdater {
         };
         match swap_in_staged(&bundle) {
             Ok(old) => {
+                let launch = if cfg!(target_os = "macos") {
+                    format!("open {}", shell_quote(&bundle))
+                } else {
+                    format!("exec {}", shell_quote(&bundle.join("bin/pi-gpui")))
+                };
                 let script = format!(
-                    "while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; rm -rf {old}; open {app}",
+                    "while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; rm -rf {old}; {launch}",
                     pid = std::process::id(),
                     old = shell_quote(&old),
-                    app = shell_quote(&bundle),
                 );
                 let spawned = Command::new("/bin/sh")
                     .arg("-c")
@@ -253,7 +258,7 @@ fn latest_release(current: Version, pi: Option<Version>) -> Result<Option<Releas
     let url = format!("https://api.github.com/repos/{REPOSITORY}/releases?per_page=30");
     let releases: Value = serde_json::from_slice(&fetch(&url, current)?)
         .map_err(|error| format!("unexpected answer from GitHub: {error}"))?;
-    for release in newer_releases(&releases, current, std::env::consts::ARCH)
+    for release in newer_releases(&releases, current, &asset_suffix(std::env::consts::ARCH))
         .into_iter()
         .take(RELEASES_TRIED)
     {
@@ -294,9 +299,19 @@ fn fetch(url: &str, current: Version) -> Result<Vec<u8>, String> {
     }
 }
 
-/// Published releases newer than `current` with an app for `arch`, newest first.
-fn newer_releases(releases: &Value, current: Version, arch: &str) -> Vec<Release> {
-    let suffix = format!("-{arch}.zip");
+/// The end of this platform's release asset name: `Pi-GPUI-1.2.3-aarch64.zip`
+/// on macOS, `pi-gpui-1.2.3-linux-x86_64.tar.gz` on Linux.
+fn asset_suffix(arch: &str) -> String {
+    if cfg!(target_os = "macos") {
+        format!("-{arch}.zip")
+    } else {
+        format!("-linux-{arch}.tar.gz")
+    }
+}
+
+/// Published releases newer than `current` with an asset ending in `suffix`,
+/// newest first.
+fn newer_releases(releases: &Value, current: Version, suffix: &str) -> Vec<Release> {
     let mut found: Vec<Release> = releases
         .as_array()
         .into_iter()
@@ -320,7 +335,7 @@ fn newer_releases(releases: &Value, current: Version, arch: &str) -> Vec<Release
             };
             Some(Release {
                 version,
-                url: asset_url(&|name| name.ends_with(&suffix))?,
+                url: asset_url(&|name| name.ends_with(suffix))?,
                 compat_url: asset_url(&|name| name == "pi-compat.json"),
             })
         })
@@ -343,18 +358,21 @@ fn release_supports(compat: &Value, pi: Version) -> bool {
 /// Downloads and unpacks the release, checks it, and copies it next to the
 /// running app (same volume, so the restart is two renames).
 fn stage(release: &Release, bundle: &Path) -> Result<(), String> {
-    let cache = crate::sessions::home_directory()
+    let cache = crate::sessions::app_cache_directory()
         .ok_or("no home directory")?
-        .join("Library/Caches/pi-gpui/updates")
+        .join("updates")
         .join(release.version.to_string());
     let _ = std::fs::remove_dir_all(&cache);
     std::fs::create_dir_all(&cache).map_err(|error| error.to_string())?;
-    let archive = cache.join("update.zip");
+    let archive = cache.join("update.archive");
     run(Command::new("curl")
         .args(["-fsSL", "--max-time", "900", "-o"])
         .arg(&archive)
         .arg(&release.url))?;
     let unpacked = cache.join("unpacked");
+    if !cfg!(target_os = "macos") {
+        return stage_linux(release, bundle, &archive, &unpacked, &cache);
+    }
     run(Command::new("ditto")
         .arg("-x")
         .arg("-k")
@@ -386,6 +404,49 @@ fn stage(release: &Release, bundle: &Path) -> Result<(), String> {
         )
     })?;
     let _ = std::fs::remove_dir_all(&cache);
+    Ok(())
+}
+
+/// Linux: the tarball holds `pi-gpui.app/` (`bin/`, `share/`). The new
+/// binary must report the expected version before it is staged.
+fn stage_linux(
+    release: &Release,
+    bundle: &Path,
+    archive: &Path,
+    unpacked: &Path,
+    cache: &Path,
+) -> Result<(), String> {
+    std::fs::create_dir_all(unpacked).map_err(|error| error.to_string())?;
+    run(Command::new("tar")
+        .arg("-xzf")
+        .arg(archive)
+        .arg("-C")
+        .arg(unpacked))?;
+    let app = unpacked.join("pi-gpui.app");
+    let binary = app.join("bin/pi-gpui");
+    let output = Command::new(&binary)
+        .arg("--version")
+        .output()
+        .map_err(|error| format!("the download has no working app: {error}"))?;
+    let reported = String::from_utf8_lossy(&output.stdout);
+    if Version::find_in(&reported) != Some(release.version) {
+        return Err(format!(
+            "the download is not Pi GPUI {} ({})",
+            release.version,
+            reported.trim()
+        ));
+    }
+    let staged = staged_path(bundle)?;
+    let _ = std::fs::remove_dir_all(&staged);
+    run(Command::new("cp").arg("-a").arg(&app).arg(&staged)).map_err(|error| {
+        format!(
+            "could not write next to the app in {} ({error})",
+            bundle
+                .parent()
+                .map_or_else(String::new, |parent| parent.display().to_string())
+        )
+    })?;
+    let _ = std::fs::remove_dir_all(cache);
     Ok(())
 }
 
@@ -441,9 +502,17 @@ fn run(command: &mut Command) -> Result<(), String> {
     }
 }
 
-/// `…/Pi GPUI.app` when running from a bundle.
+/// `…/Pi GPUI.app` when running from a bundle; on Linux the install folder
+/// from the release tarball (`…/pi-gpui.app/bin/pi-gpui`). A binary a distro
+/// package put in `/usr/bin` is not one: its package manager updates it.
 fn running_bundle() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?.canonicalize().ok()?;
+    if !cfg!(target_os = "macos") {
+        let bin = executable.parent()?;
+        let prefix = bin.parent()?;
+        return (bin.file_name()? == "bin" && prefix.extension()? == "app")
+            .then(|| prefix.to_path_buf());
+    }
     let contents = executable.parent()?.parent()?;
     let bundle = contents.parent()?;
     (contents.file_name()? == "Contents" && bundle.extension()? == "app")
@@ -458,8 +527,7 @@ fn pretend_version() -> Option<Version> {
 
 /// Stores this launch's version; returns the previous one if it differs.
 fn remember_version() -> Option<String> {
-    let path =
-        crate::sessions::home_directory()?.join("Library/Application Support/pi-gpui/last-version");
+    let path = crate::sessions::app_data_directory()?.join("last-version");
     let current = env!("CARGO_PKG_VERSION");
     let previous = std::fs::read_to_string(&path).ok();
     if previous.as_deref().map(str::trim) != Some(current) {
@@ -514,7 +582,7 @@ mod tests {
 
     #[test]
     fn newer_published_releases_newest_first() {
-        let found = newer_releases(&releases(), version("0.1.0"), "aarch64");
+        let found = newer_releases(&releases(), version("0.1.0"), "-aarch64.zip");
         let versions: Vec<String> = found
             .iter()
             .map(|release| release.version.to_string())
@@ -525,8 +593,8 @@ mod tests {
             found[0].compat_url.as_deref(),
             Some("https://example.com/v0.2.1.json")
         );
-        assert!(newer_releases(&releases(), version("0.1.0"), "x86_64").is_empty());
-        assert!(newer_releases(&releases(), version("0.2.1"), "aarch64").is_empty());
+        assert!(newer_releases(&releases(), version("0.1.0"), "-x86_64.zip").is_empty());
+        assert!(newer_releases(&releases(), version("0.2.1"), "-aarch64.zip").is_empty());
     }
 
     #[test]

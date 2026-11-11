@@ -73,9 +73,64 @@ actions!(
     ]
 );
 
+/// Text editing keys: the macOS set, or the usual Linux one elsewhere.
+pub fn bind_keys(cx: &mut App) {
+    if cfg!(target_os = "macos") {
+        bind_mac_keys(cx);
+    } else {
+        bind_linux_keys(cx);
+    }
+}
+
+/// GTK and Qt text fields: Ctrl for words and clipboard, Home and End for lines.
+fn bind_linux_keys(cx: &mut App) {
+    let context = Some(KEY_CONTEXT);
+    cx.bind_keys([
+        KeyBinding::new("backspace", Backspace, context),
+        KeyBinding::new("shift-backspace", Backspace, context),
+        KeyBinding::new("delete", Delete, context),
+        KeyBinding::new("ctrl-backspace", DeleteWordLeft, context),
+        KeyBinding::new("ctrl-delete", DeleteWordRight, context),
+        KeyBinding::new("ctrl-shift-backspace", DeleteToLineStart, context),
+        KeyBinding::new("ctrl-shift-delete", DeleteToLineEnd, context),
+        KeyBinding::new("left", Left, context),
+        KeyBinding::new("right", Right, context),
+        KeyBinding::new("up", Up, context),
+        KeyBinding::new("down", Down, context),
+        KeyBinding::new("ctrl-left", WordLeft, context),
+        KeyBinding::new("ctrl-right", WordRight, context),
+        KeyBinding::new("home", LineStart, context),
+        KeyBinding::new("end", LineEnd, context),
+        KeyBinding::new("ctrl-home", DocumentStart, context),
+        KeyBinding::new("ctrl-end", DocumentEnd, context),
+        KeyBinding::new("shift-left", SelectLeft, context),
+        KeyBinding::new("shift-right", SelectRight, context),
+        KeyBinding::new("shift-up", SelectUp, context),
+        KeyBinding::new("shift-down", SelectDown, context),
+        KeyBinding::new("ctrl-shift-left", SelectWordLeft, context),
+        KeyBinding::new("ctrl-shift-right", SelectWordRight, context),
+        KeyBinding::new("shift-home", SelectToLineStart, context),
+        KeyBinding::new("shift-end", SelectToLineEnd, context),
+        KeyBinding::new("ctrl-shift-home", SelectToDocumentStart, context),
+        KeyBinding::new("ctrl-shift-end", SelectToDocumentEnd, context),
+        KeyBinding::new("ctrl-a", SelectAll, context),
+        KeyBinding::new("shift-enter", Newline, context),
+        KeyBinding::new("alt-enter", Newline, context),
+        KeyBinding::new("ctrl-z", Undo, context),
+        KeyBinding::new("ctrl-shift-z", Redo, context),
+        KeyBinding::new("ctrl-y", Redo, context),
+        KeyBinding::new("ctrl-v", Paste, context),
+        KeyBinding::new("shift-insert", Paste, context),
+        KeyBinding::new("ctrl-shift-v", Paste, context),
+        KeyBinding::new("ctrl-c", Copy, context),
+        KeyBinding::new("ctrl-insert", Copy, context),
+        KeyBinding::new("ctrl-x", Cut, context),
+    ]);
+}
+
 /// macOS text editing keys, including the Emacs-style control bindings that
 /// Cocoa text views support.
-pub fn bind_keys(cx: &mut App) {
+fn bind_mac_keys(cx: &mut App) {
     let context = Some(KEY_CONTEXT);
     cx.bind_keys([
         KeyBinding::new("backspace", Backspace, context),

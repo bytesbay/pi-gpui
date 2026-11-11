@@ -210,7 +210,13 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
     {
         return None;
     }
-    let shell = std::env::var_os("SHELL").unwrap_or_else(|| OsString::from("/bin/zsh"));
+    let shell = std::env::var_os("SHELL").unwrap_or_else(|| {
+        OsString::from(if cfg!(target_os = "macos") {
+            "/bin/zsh"
+        } else {
+            "/bin/bash"
+        })
+    });
     let output = run_with_timeout(
         Command::new(shell).args(["-ilc", &format!("command -v {name}")]),
         COMMAND_TIMEOUT,
@@ -331,8 +337,7 @@ pub fn bridge_extension() -> Option<&'static Path> {
     static PATH: std::sync::OnceLock<Option<PathBuf>> = std::sync::OnceLock::new();
     PATH.get_or_init(|| {
         const SOURCE: &str = include_str!("../extensions/pi-gpui-bridge.ts");
-        let dir = crate::sessions::home_directory()?
-            .join("Library/Application Support/pi-gpui/extensions");
+        let dir = crate::sessions::app_data_directory()?.join("extensions");
         let path = dir.join("pi-gpui-bridge.ts");
         // Left over from when the app was called Pi GPU UI.
         let _ = std::fs::remove_file(dir.join("pi-gpu-ui-bridge.ts"));

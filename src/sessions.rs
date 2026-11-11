@@ -241,6 +241,33 @@ pub fn home_directory() -> Option<PathBuf> {
     std::env::var_os("HOME").map(PathBuf::from)
 }
 
+/// The app's own files (settings, projects, plugins): `~/Library/Application
+/// Support/pi-gpui` on macOS, `$XDG_CONFIG_HOME/pi-gpui` (`~/.config/pi-gpui`)
+/// elsewhere.
+pub fn app_data_directory() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return Some(home_directory()?.join("Library/Application Support/pi-gpui"));
+    }
+    Some(xdg_directory("XDG_CONFIG_HOME", ".config")?.join("pi-gpui"))
+}
+
+/// Downloads that can be thrown away: `~/Library/Caches/pi-gpui` on macOS,
+/// `$XDG_CACHE_HOME/pi-gpui` (`~/.cache/pi-gpui`) elsewhere.
+pub fn app_cache_directory() -> Option<PathBuf> {
+    if cfg!(target_os = "macos") {
+        return Some(home_directory()?.join("Library/Caches/pi-gpui"));
+    }
+    Some(xdg_directory("XDG_CACHE_HOME", ".cache")?.join("pi-gpui"))
+}
+
+/// An XDG base directory; relative values are ignored, as the spec says.
+fn xdg_directory(variable: &str, fallback: &str) -> Option<PathBuf> {
+    std::env::var_os(variable)
+        .map(PathBuf::from)
+        .filter(|path| path.is_absolute())
+        .or_else(|| Some(home_directory()?.join(fallback)))
+}
+
 fn same_directory(cwd: &str, workspace: &Path) -> bool {
     let cwd = Path::new(cwd);
     cwd == workspace || cwd.canonicalize().is_ok_and(|cwd| cwd == workspace)
