@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Pi GPUI: the native desktop client for the pi coding agent</title>
+<title>Pi GPUI: a native GUI for the pi coding agent</title>
 <meta name="author" content="Miroslaw Shpak">
-<meta name="description" content="Pi GPUI is a native desktop client for the pi coding agent, written in Rust with GPUI. Available for macOS; Linux is planned. It runs your installed pi with its sessions, forks, session tree and slash commands. Free and MIT licensed.">
+<meta name="description" content="Pi GPUI gives your installed pi coding agent a native interface on Apple silicon Macs. Manage sessions, branches and models. Free and open source.">
 <meta name="keywords" content="pi gui, pi interface, pi desktop app, pi coding agent, pi rust, gpui, macos coding agent app, pi native desktop client, ai coding agent gui">
 <link rel="canonical" href="https://pi-gpui.dev/">
 <meta name="theme-color" content="#0b0e14">
@@ -14,14 +14,14 @@
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="Pi GPUI">
 <meta property="og:url" content="https://pi-gpui.dev/">
-<meta property="og:title" content="Pi GPUI: the native desktop client for the pi coding agent">
-<meta property="og:description" content="A native desktop client for pi, written in Rust with GPUI. Runs your installed pi with your models, extensions and sessions.">
+<meta property="og:title" content="Pi GPUI: a native GUI for the pi coding agent">
+<meta property="og:description" content="A native GUI for your installed pi coding agent, built with Rust and GPUI for macOS.">
 <meta property="og:image" content="https://pi-gpui.dev/img/og.jpg?v=2">
 <meta property="og:image:width" content="1280">
 <meta property="og:image:height" content="640">
 <meta name="twitter:card" content="summary_large_image">
-<meta name="twitter:title" content="Pi GPUI: the native desktop client for the pi coding agent">
-<meta name="twitter:description" content="A native desktop client for pi, written in Rust with GPUI.">
+<meta name="twitter:title" content="Pi GPUI: a native GUI for the pi coding agent">
+<meta name="twitter:description" content="A native GUI for your installed pi coding agent, built with Rust and GPUI for macOS.">
 <meta name="twitter:image" content="https://pi-gpui.dev/img/og.jpg?v=2">
 
 <link rel="icon" href="/img/icon.svg" type="image/svg+xml">
@@ -35,8 +35,7 @@
   "@context": "https://schema.org",
   "@type": "SoftwareApplication",
   "name": "Pi GPUI",
-  "alternateName": ["pi gui", "pi interface", "pi desktop app"],
-  "description": "A native desktop client for the pi coding agent, written in Rust with GPUI. Runs on macOS today; Linux is planned.",
+  "description": "A native GUI for the pi coding agent, written in Rust with GPUI. Runs on macOS today; Linux is planned.",
   "license": "https://opensource.org/licenses/MIT",
   "applicationCategory": "DeveloperApplication",
   "operatingSystem": "macOS 13 or newer (Apple silicon)",
@@ -58,6 +57,8 @@
   "mainEntity": [
     { "@type": "Question", "name": "What is Pi GPUI?",
       "acceptedAnswer": { "@type": "Answer", "text": "A desktop app for the pi coding agent, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU." } },
+    { "@type": "Question", "name": "Is there a GUI for pi?",
+      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Pi GPUI is a free native GUI for pi on macOS, written in Rust with GPUI, without Electron or a webview. Web, Electron, Tauri and editor options also exist, and awesome-pi-agent lists them." } },
     { "@type": "Question", "name": "Can I use Claude models?",
       "acceptedAnswer": { "@type": "Answer", "text": "Yes, if your pi is set up for them. Pi GPUI runs your pi with its models, extensions and skills as they are." } },
     { "@type": "Question", "name": "Is it written in Rust?",
@@ -98,7 +99,7 @@
       <span class="dot"></span><span data-version>Latest release</span><span class="pill-sep">·</span>macOS, Apple silicon
     </a>
     <h1>A native app<br>for <span class="rotor" aria-live="polite"><span class="strut" aria-hidden="true">p</span><span class="word"><span data-rotor>pi</span></span></span></h1>
-    <p class="lead">Pi GPUI is a desktop app for the pi coding agent, on macOS for now. It runs the pi you already have, so your models, extensions, skills and sessions are there from the first launch. It's written in Rust and drawn on the GPU, so it stays fast in long sessions.</p>
+    <p class="lead">Pi GPUI runs your installed pi coding agent in a native desktop app, on macOS for now. Your models, extensions, skills and sessions are ready at launch. It's written in Rust with GPUI and drawn on the GPU.</p>
     <div class="cta">
       <a class="btn" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">
         <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1v9m0 0 3.5-3.5M8 10 4.5 6.5M2 12.5V14h12v-1.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -156,7 +157,7 @@
       <article class="card">
         <span class="mono tag">⌘1 … ⌘9</span>
         <h3>Sessions side by side</h3>
-        <p>Projects and sessions live in the sidebar. Each open session has its own pi, so one keeps working while you are in another.</p>
+        <p>Projects and sessions live in the sidebar, open sessions in tabs. Each one has its own pi, so one keeps working while you are in another.</p>
       </article>
       <article class="card">
         <span class="mono tag">⌘⇧T</span>
@@ -276,6 +277,10 @@ models · tools · extensions · your files</pre>
     <details open>
       <summary>What is Pi GPUI?</summary>
       <p>A desktop app for the <a href="https://github.com/earendil-works/pi" rel="noopener">pi coding agent</a>, on macOS for now. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window.</p>
+    </details>
+    <details>
+      <summary>Is there a GUI for pi?</summary>
+      <p>Yes. Pi GPUI is a free native GUI for pi on macOS, written in Rust with GPUI, without Electron or a webview. Web, Electron, Tauri and editor options also exist, and <a href="https://github.com/thevibeworks/awesome-pi-agent#frontends" rel="noopener">awesome-pi-agent</a> lists them.</p>
     </details>
     <details>
       <summary>Can I use Claude models?</summary>
