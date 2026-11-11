@@ -15,6 +15,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Duration;
 
+use futures::channel::oneshot;
 use gpui::{App, AppContext as _, Context, Entity, Global, Task};
 use serde_json::Value;
 
@@ -48,6 +49,8 @@ pub struct AutoUpdater {
     manual: bool,
     /// Version before this launch, when the app was just updated.
     updated_from: Option<String>,
+    /// Plugins waiting for the result of a check (`app.checkUpdates`).
+    waiters: Vec<oneshot::Sender<UpdateStatus>>,
     _poll: Task<()>,
     _check: Task<()>,
 }
@@ -68,6 +71,7 @@ impl AutoUpdater {
                 manual_result: None,
                 manual: false,
                 updated_from: remember_version(),
+                waiters: Vec::new(),
                 _poll: Task::ready(()),
                 _check: Task::ready(()),
             };
@@ -116,26 +120,48 @@ impl AutoUpdater {
         self.pi = Some(version);
     }
 
+    /// A check whose result comes back through the receiver (and shows in
+    /// the window like "Check for Updates…").
+    pub fn check_and_wait(&mut self, cx: &mut Context<Self>) -> oneshot::Receiver<UpdateStatus> {
+        let (sender, receiver) = oneshot::channel();
+        self.waiters.push(sender);
+        self.check(true, cx);
+        receiver
+    }
+
+    /// The result of a check someone asked for: the hub shows it once and
+    /// waiting plugins get it.
+    fn report(&mut self, status: UpdateStatus, cx: &mut Context<Self>) {
+        for waiter in self.waiters.drain(..) {
+            waiter.send(status.clone()).ok();
+        }
+        self.manual_result = Some(status);
+        cx.notify();
+    }
+
     pub fn check(&mut self, manual: bool, cx: &mut Context<Self>) {
         if matches!(
             self.status,
             UpdateStatus::Checking | UpdateStatus::Downloading(_)
         ) {
+            // The running check reports when it ends.
+            self.manual |= manual;
             return;
         }
         if let UpdateStatus::Ready(_) = self.status {
             if manual {
-                self.manual_result = Some(self.status.clone());
-                cx.notify();
+                self.report(self.status.clone(), cx);
             }
             return;
         }
         let Some(bundle) = self.bundle.clone() else {
             if manual {
-                self.manual_result = Some(UpdateStatus::Failed(
-                    "updates work in the installed app, not in a development build".to_string(),
-                ));
-                cx.notify();
+                self.report(
+                    UpdateStatus::Failed(
+                        "updates work in the installed app, not in a development build".to_string(),
+                    ),
+                    cx,
+                );
             }
             return;
         };
@@ -185,9 +211,8 @@ impl AutoUpdater {
         if let UpdateStatus::Failed(error) = &status {
             eprintln!("pi-gpui: update check failed: {error}");
         }
-        if self.manual {
-            self.manual_result = Some(status.clone());
-            self.manual = false;
+        if std::mem::take(&mut self.manual) {
+            self.report(status.clone(), cx);
         }
         // A failed background check is retried later; it is not shown.
         self.status = match status {
@@ -206,32 +231,8 @@ impl AutoUpdater {
         };
         match swap_in_staged(&bundle) {
             Ok(old) => {
-                let launch = if cfg!(target_os = "macos") {
-                    format!("open {}", shell_quote(&bundle))
-                } else {
-                    format!("exec {}", shell_quote(&bundle.join("bin/pi-gpui")))
-                };
-                let script = format!(
-                    "while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; rm -rf {old}; {launch}",
-                    pid = std::process::id(),
-                    old = shell_quote(&old),
-                );
-                let spawned = Command::new("/bin/sh")
-                    .arg("-c")
-                    .arg(script)
-                    .stdin(std::process::Stdio::null())
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .spawn();
-                if let Err(error) = spawned {
-                    self.status = UpdateStatus::Idle;
-                    self.manual_result = Some(UpdateStatus::Failed(format!(
-                        "could not relaunch: {error}; open the app again to finish"
-                    )));
-                    cx.notify();
-                    return;
-                }
-                cx.quit();
+                let cleanup = format!("rm -rf {}; ", shell_quote(&old));
+                self.relaunch_after_exit(cleanup, cx);
             }
             Err(error) => {
                 self.status = UpdateStatus::Idle;
@@ -239,6 +240,55 @@ impl AutoUpdater {
                 cx.notify();
             }
         }
+    }
+
+    /// Quits and starts the app again, applying a staged update if there is
+    /// one. Development builds start the same binary again.
+    pub fn restart(&mut self, cx: &mut Context<Self>) {
+        if self.bundle.is_some() && matches!(self.status, UpdateStatus::Ready(_)) {
+            self.restart_to_update(cx);
+        } else {
+            self.relaunch_after_exit(String::new(), cx);
+        }
+    }
+
+    /// A shell waits for this process to exit, runs `cleanup`, then launches
+    /// the app; this process quits.
+    fn relaunch_after_exit(&mut self, cleanup: String, cx: &mut Context<Self>) {
+        let launch = match &self.bundle {
+            Some(bundle) if cfg!(target_os = "macos") => format!("open {}", shell_quote(bundle)),
+            Some(bundle) => format!("exec {}", shell_quote(&bundle.join("bin/pi-gpui"))),
+            None => match std::env::current_exe() {
+                Ok(executable) => format!("exec {}", shell_quote(&executable)),
+                Err(error) => {
+                    self.manual_result = Some(UpdateStatus::Failed(format!(
+                        "could not find the app to relaunch: {error}"
+                    )));
+                    cx.notify();
+                    return;
+                }
+            },
+        };
+        let script = format!(
+            "while kill -0 {pid} 2>/dev/null; do sleep 0.1; done; {cleanup}{launch}",
+            pid = std::process::id(),
+        );
+        let spawned = Command::new("/bin/sh")
+            .arg("-c")
+            .arg(script)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn();
+        if let Err(error) = spawned {
+            self.status = UpdateStatus::Idle;
+            self.manual_result = Some(UpdateStatus::Failed(format!(
+                "could not relaunch: {error}; open the app again"
+            )));
+            cx.notify();
+            return;
+        }
+        cx.quit();
     }
 }
 

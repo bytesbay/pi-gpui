@@ -163,6 +163,8 @@ struct Plugin {
     startup: bool,
     /// `"permissions": ["sessions"]`: may read and drive pi sessions.
     sessions: bool,
+    /// `"permissions": ["app"]`: may check for updates and restart the app.
+    app: bool,
     state: PluginState,
     /// Messages for the plugin while its process is starting.
     pending: Vec<Value>,
@@ -270,6 +272,7 @@ impl PluginRegistry {
                 run: parsed.run,
                 startup: parsed.startup,
                 sessions: parsed.sessions,
+                app: parsed.app,
                 state: PluginState::Stopped,
                 pending: Vec::new(),
                 _start_task: Task::ready(()),
@@ -589,18 +592,29 @@ impl PluginRegistry {
             plugin_id: plugin_id.clone(),
             id,
         };
-        if !method.starts_with("sessions.") {
-            self.respond(reply, Err(format!("unknown method {method}")));
-            return;
-        }
-        let allowed = self
+        let Some((sessions, app)) = self
             .plugins
             .iter()
-            .any(|plugin| plugin.id == *plugin_id && plugin.sessions);
+            .find(|plugin| plugin.id == *plugin_id)
+            .map(|plugin| (plugin.sessions, plugin.app))
+        else {
+            return;
+        };
+        let (allowed, permission) = if method.starts_with("sessions.") {
+            (sessions, "sessions")
+        } else if method.starts_with("app.") {
+            (app, "app")
+        } else {
+            self.respond(reply, Err(format!("unknown method {method}")));
+            return;
+        };
         if !allowed {
+            let prefix = method.split('.').next().unwrap_or_default();
             self.respond(
                 reply,
-                Err("sessions.* needs \"permissions\": [\"sessions\"] in plugin.json".into()),
+                Err(format!(
+                    "{prefix}.* needs \"permissions\": [\"{permission}\"] in plugin.json"
+                )),
             );
             return;
         }
@@ -1041,6 +1055,7 @@ struct ParsedManifest {
     pi_extensions: Vec<PathBuf>,
     startup: bool,
     sessions: bool,
+    app: bool,
 }
 
 fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
@@ -1156,18 +1171,19 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         Some("startup") => true,
         Some(other) => return Err(format!("activation: unknown value \"{other}\"")),
     };
-    let sessions = manifest["permissions"]
-        .as_array()
-        .is_some_and(|permissions| {
-            permissions
-                .iter()
-                .any(|permission| permission == "sessions")
-        });
+    let permitted = |name: &str| {
+        manifest["permissions"]
+            .as_array()
+            .is_some_and(|permissions| permissions.iter().any(|permission| permission == name))
+    };
+    let sessions = permitted("sessions");
+    let app = permitted("app");
 
     Ok(ParsedManifest {
         name: SharedString::from(manifest["name"].as_str().unwrap_or(&id).to_string()),
         startup,
         sessions,
+        app,
         id,
         run,
         commands,
@@ -1268,16 +1284,16 @@ mod tests {
                     "contributes": { "commands": [{ "id": "other.go" }] } }),
         );
         assert!(parse_manifest(&foreign_command).is_err());
-        assert!(!parsed.startup && !parsed.sessions);
+        assert!(!parsed.startup && !parsed.sessions && !parsed.app);
 
         let server = root.join("server");
         write_manifest(
             &server,
             json!({ "id": "srv", "protocol": PROTOCOL_VERSION, "run": ["x"],
-                    "activation": "startup", "permissions": ["sessions"] }),
+                    "activation": "startup", "permissions": ["sessions", "app"] }),
         );
         let parsed = parse_manifest(&server).expect("server manifest");
-        assert!(parsed.startup && parsed.sessions);
+        assert!(parsed.startup && parsed.sessions && parsed.app);
 
         let bad_activation = root.join("bad-activation");
         write_manifest(

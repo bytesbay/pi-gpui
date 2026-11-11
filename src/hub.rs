@@ -1067,6 +1067,11 @@ impl HubView {
         match method.as_str() {
             "sessions.list" => self.list_sessions_for_plugin(&params, reply, cx),
             "sessions.open" => self.open_session_for_plugin(&params, reply, cx),
+            "app.checkUpdates" => self.check_updates_for_plugin(reply, cx),
+            "app.restart" => self.restart_app_for_plugin(&params, reply, cx),
+            _ if method.starts_with("app.") => {
+                reply.finish(&plugins, Err(format!("unknown method {method}")), cx)
+            }
             _ => {
                 let handle = params["session"].as_str().unwrap_or_default();
                 let Some(chat) = self.chat_by_handle(handle, cx) else {
@@ -1094,10 +1099,151 @@ impl HubView {
                     "sessions.rpc" => {
                         chat.update(cx, |chat, cx| chat.plugin_rpc(&params, reply, cx))
                     }
+                    "sessions.reload" => self.reload_session_for_plugin(chat, &params, reply, cx),
                     _ => reply.finish(&plugins, Err(format!("unknown method {method}")), cx),
                 }
             }
         }
+    }
+
+    /// `sessions.reload`: a fresh pi for one session, like ⌘⇧R does for all.
+    fn reload_session_for_plugin(
+        &mut self,
+        chat: Entity<ChatView>,
+        params: &Value,
+        reply: PluginReply,
+        cx: &mut Context<Self>,
+    ) {
+        if chat.read(cx).is_running() && params["force"].as_bool() != Some(true) {
+            let error = "pi is working in this session; stop it first or pass force".to_string();
+            reply.finish(&self.plugins, Err(error), cx);
+            return;
+        }
+        let check = cx.background_spawn(async { pi::check_installation() });
+        cx.spawn(async move |this, cx| {
+            let result = check.await;
+            this.update(cx, |this, cx| {
+                let installation = match result {
+                    Ok(installation) => installation,
+                    Err(error) => {
+                        let message = error.to_string();
+                        this.installation = InstallationState::Failed(error);
+                        reply.finish(&this.plugins, Err(message), cx);
+                        cx.notify();
+                        return;
+                    }
+                };
+                let version = installation.version;
+                AutoUpdater::global(cx).update(cx, |updater, _| updater.set_pi_version(version));
+                this.installation = InstallationState::Ready(installation.clone());
+                chat.update(cx, |chat, cx| chat.restart(installation, cx));
+                let info = this.session_info(&chat, cx);
+                reply.finish(&this.plugins, Ok(info), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `app.checkUpdates`: checks the app (and stages a newer release) and
+    /// pi with its packages, then answers with both.
+    fn check_updates_for_plugin(&mut self, reply: PluginReply, cx: &mut Context<Self>) {
+        let installation = match &self.installation {
+            InstallationState::Ready(installation) => Some(installation.clone()),
+            _ => None,
+        };
+        let pi_version = installation
+            .as_ref()
+            .map(|installation| installation.version);
+        let pi_check = cx.background_spawn(async move {
+            installation.map(|installation| pi_updates::check(&installation))
+        });
+        let updater = AutoUpdater::global(cx);
+        let current = updater.read(cx).current_version();
+        let app_check = updater.update(cx, |updater, cx| updater.check_and_wait(cx));
+        cx.spawn(async move |this, cx| {
+            let pi = pi_check.await;
+            let status = app_check.await.unwrap_or(UpdateStatus::Idle);
+            this.update(cx, |this, cx| {
+                let mut app = json!({ "version": current.to_string() });
+                match status {
+                    UpdateStatus::Ready(version) => {
+                        app["status"] = json!("ready");
+                        app["available"] = json!(version.to_string());
+                    }
+                    UpdateStatus::Failed(error) => {
+                        app["status"] = json!("failed");
+                        app["error"] = json!(error);
+                    }
+                    _ => app["status"] = json!("upToDate"),
+                }
+                let mut result = json!({ "app": app });
+                if let Some(updates) = pi {
+                    result["pi"] = json!({
+                        "version": pi_version.map(|version| version.to_string()),
+                        "available": updates.pi.map(|version| version.to_string()),
+                    });
+                    result["packages"] = updates
+                        .packages
+                        .iter()
+                        .map(|package| {
+                            json!({
+                                "source": package.source,
+                                "name": package.name,
+                                "current": package.current,
+                                "available": package.latest,
+                            })
+                        })
+                        .collect();
+                    this.pi_updates = updates;
+                }
+                reply.finish(&this.plugins, Ok(result), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
+    }
+
+    /// `app.restart`: quits and starts the app again, applying a downloaded
+    /// update. Answers first, so the plugin can report it.
+    fn restart_app_for_plugin(
+        &mut self,
+        params: &Value,
+        reply: PluginReply,
+        cx: &mut Context<Self>,
+    ) {
+        let running = self
+            .open_chats()
+            .iter()
+            .filter(|chat| chat.read(cx).is_running())
+            .count();
+        if running > 0 && params["force"].as_bool() != Some(true) {
+            let error = format!(
+                "pi is working in {running} session(s); running work would stop. Pass force to restart anyway"
+            );
+            reply.finish(&self.plugins, Err(error), cx);
+            return;
+        }
+        let updater = AutoUpdater::global(cx);
+        let update = match updater.read(cx).status() {
+            UpdateStatus::Ready(version) => Some(version.to_string()),
+            _ => None,
+        };
+        reply.finish(
+            &self.plugins,
+            Ok(json!({ "restarting": true, "update": update })),
+            cx,
+        );
+        cx.spawn(async move |_, cx| {
+            // Time for the answer to reach the plugin and its client.
+            cx.background_executor()
+                .timer(std::time::Duration::from_millis(800))
+                .await;
+            updater.update(cx, |updater, cx| updater.restart(cx)).ok();
+        })
+        .detach();
     }
 
     /// Projects in the sidebar with their recent sessions, and the open ones.

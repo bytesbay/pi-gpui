@@ -57,7 +57,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 - `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
 - `activation`: `lazy` (default) starts the plugin on first use; `startup` starts it with the app, for plugins that serve something (a local server, a bridge).
-- `permissions`: `["sessions"]` lets the plugin list, open and drive pi sessions and follow their events (see Sessions). Without it `sessions.*` requests fail.
+- `permissions`: `"sessions"` lets the plugin list, open and drive pi sessions and follow their events (see Sessions); `"app"` lets it check for updates and restart the app (see App). Without them `sessions.*` and `app.*` requests fail.
 
 ### Live views
 
@@ -124,6 +124,7 @@ Requests:
 | `sessions.abort` | `session` | stops the run, like Esc |
 | `sessions.answer` | `session`, `question`, `answer?` / `confirmed?` / `cancel?` | answers the extension question pi waits on. `answer` is an option (or its 1-based number) or text |
 | `sessions.rpc` | `session`, `command` | pi's response data for a pi RPC command. Allowed: reads (`get_state`, `get_messages`, `get_session_stats`, `get_commands`, `get_available_models`, `get_tree`, …) and settings (`set_model`, `set_thinking_level`, `set_session_name`, `compact`, `bash`, `clear_queue`, …). Prompts, forks and session switches are not |
+| `sessions.reload` | `session`, `force?` | the summary. Restarts pi for the session (like ⌘⇧R for one session) so it picks up updated pi, extensions and settings; the transcript is read again. Fails while pi works unless `force` |
 | `sessions.subscribe` | `session` (an id or `"*"`) | starts the events below |
 | `sessions.unsubscribe` | `session` | stops them |
 
@@ -136,6 +137,15 @@ Events for subscribed sessions (app → plugin):
 | `session.events` | `session`, `events` | pi's own records of that session, in order: the [JSON event stream](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/json.md) (`agent_start`, `message_update`, `tool_execution_end`, `agent_settled`, …) and `extension_ui_request`. Responses to commands are not included. `{"type": "process_exited"}` when pi stops |
 | `session.state` | `session` (a summary) | a session opened, or its title, file or running state changed |
 | `session.closed` | `session` (the id) | the session was closed (its project removed) |
+
+### App
+
+With `"permissions": ["app"]`:
+
+| Method | Params | Result |
+|---|---|---|
+| `app.checkUpdates` | | `app`: `{version, status, available?, error?}` (`status` is `upToDate`, `ready` or `failed`; `ready` means `available` is downloaded); `pi`: `{version, available?}` and `packages`: `[{source, name, current, available}]` when pi is installed. Shows the result in the window like "Check for Updates…". A found release downloads before the answer |
+| `app.restart` | `force?` | `{restarting, update}`. Answers, then quits and starts the app again, installing a downloaded update (`update` is its version or `null`). Fails while pi works unless `force`. Plugins and session ids start over |
 
 ### JavaScript example
 
