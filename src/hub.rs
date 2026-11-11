@@ -2448,11 +2448,29 @@ impl HubView {
                 this.confirm_close(view.clone(), window, cx);
             }))
         });
-        let hover_buttons = h_flex()
-            .gap(px(2.))
-            .children(hide_button)
-            .child(menu_button)
-            .children(close_button);
+        // ⌘ held: one click moves the session to the Trash, no question asked.
+        let quick_delete = (self.command_held && row.file.is_some() && !is_running).then(|| {
+            let row = row.clone();
+            IconButton::new(
+                ElementId::Name(format!("session-delete:{}", row.id).into()),
+                IconName::Trash,
+            )
+            .size(ButtonSize::Compact)
+            .icon_size(IconSize::XSmall)
+            .icon_color(Color::Error)
+            .tooltip(Tooltip::text("Move to Trash"))
+            .on_click(cx.listener(move |this, _, _, cx| {
+                this.delete_session(row.clone(), cx);
+            }))
+        });
+        let hover_buttons = match quick_delete {
+            Some(delete) => h_flex().child(delete),
+            None => h_flex()
+                .gap(px(2.))
+                .children(hide_button)
+                .child(menu_button)
+                .children(close_button),
+        };
 
         let item = ListItem::new(row.id.clone())
             .indent_level(1)
