@@ -151,29 +151,50 @@ h1 {
 /* An invisible "p" keeps the line's height and baseline while the word is
    erased to nothing, so the page below does not jump. */
 .strut { display: inline-block; width: 0; overflow: hidden; visibility: hidden; user-select: none; pointer-events: none; }
-/* The word is cut like the logo: a katana streak, two halves that slide
-   apart and fade, then the next word. The halves and the streak sit on top
-   of the word, which keeps its width while they fly. */
-.word { position: relative; display: inline-block; }
+/* The word is cut like the logo: a katana streak, two halves that hang,
+   fly apart and fade, sparks, then the next word letter by letter. All of
+   it sits on top of the word, which is hidden while they play. */
+.word { position: relative; display: inline-block; cursor: pointer; }
 .word.cut { color: transparent; }
-/* Glyphs reach past the tight line box (descenders of p, y, g). Filters and
-   clip paths cut at the box, so the text and the halves get room around the
-   ink, and negative margins keep the layout as it was. */
-.piece { position: absolute; left: -0.15em; top: -0.3em; padding: 0.3em 0.15em; color: var(--accent); white-space: nowrap; pointer-events: none; will-change: transform, opacity, filter; }
-.streak {
+/* Glyphs reach past the tight line box (descenders of p, y, g). Clip paths
+   cut at the box, so the text and the halves get room around the ink, and
+   negative margins keep the layout as it was. */
+.piece { position: absolute; left: -0.15em; top: -0.3em; color: var(--accent); pointer-events: none; user-select: none; will-change: transform, opacity; }
+.ink { display: block; padding: 0.3em 0.15em; white-space: pre; }
+/* The same text again in white, clipped to a strip along the cut. */
+.hot { position: absolute; inset: 0; color: #fff; opacity: 0; }
+.letter { display: inline-block; transform-origin: 50% 80%; will-change: transform, opacity; }
+.streak, .spark {
   position: absolute;
   left: 0;
   top: 0;
-  height: 0.055em;
-  min-height: 3px;
-  border-radius: 999px;
-  background: linear-gradient(90deg, rgba(255, 244, 214, 0), #fff6dc 35%, #fff 55%, rgba(255, 236, 190, 0));
-  /* drop-shadow follows the gradient's alpha; box-shadow would glow around
+  transform-origin: 0 50%;
+  pointer-events: none;
+}
+.streak {
+  height: 0.08em;
+  min-height: 4px;
+  margin-top: min(-0.04em, -2px);
+  /* drop-shadow follows the light's alpha; box-shadow would glow around
      the faded ends and leave them dark. */
   filter: drop-shadow(0 0 0.06em #fff) drop-shadow(0 0 0.18em rgba(255, 226, 160, 0.9)) drop-shadow(0 0 0.45em rgba(230, 180, 80, 0.6));
+}
+/* A long thin ellipse tapers to a point at both ends like a blade. */
+.light {
+  display: block;
+  height: 100%;
+  border-radius: 50%;
+  background: linear-gradient(90deg, rgba(255, 236, 190, 0), #fff6dc 45%, #fff 85%, rgba(255, 255, 255, 0.6));
   transform-origin: 0 50%;
+  will-change: transform, opacity;
+}
+.spark {
+  height: max(0.03em, 2px);
+  margin-top: min(-0.015em, -1px);
+  border-radius: 50%;
+  background: linear-gradient(90deg, rgba(230, 180, 80, 0), #ffe9b8 60%, #fff);
+  box-shadow: 0 0 6px rgba(255, 214, 140, 0.8);
   opacity: 0;
-  pointer-events: none;
   will-change: transform, opacity;
 }
 .lead { max-width: 640px; margin: 0; font-size: clamp(17px, 2vw, 20px); color: var(--muted); }

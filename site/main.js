@@ -19,105 +19,209 @@ fetch("https://api.github.com/repos/bytesbay/pi-gpui/releases/latest")
   })
   .catch(() => {});
 
-// "A native Mac app for ___": a katana cuts the word in two, like the
-// logo, the halves slide apart and fade, and the next word comes in.
+// "A native app for ___": a katana cuts the word in two, like the logo.
+// The blade flashes through, the halves hold for a beat, then fly apart
+// with sparks, and the next word lands letter by letter. A click on the
+// word cuts it right away.
 const rotor = document.querySelector("[data-rotor]");
 if (rotor && !reduceMotion && "animate" in rotor) {
-  // Halves and the streak live next to the text, so changing the text
-  // does not remove them mid-flight.
+  // Everything that moves lives next to the text and is built up front on
+  // one clock, so the real word can change under it at once.
   const stage = rotor.parentElement;
   const words = ["pi", "your agent", "pi sessions"];
+  // Where the cut crosses the left and the right edge, as a share of the
+  // height. The first rises to the right like the logo, the second is the
+  // stroke back down.
+  const cuts = [[0.68, 0.34], [0.36, 0.7]];
+  const HIT = 90; // ms until the blade is through and the word reacts
+  const HOLD = 130; // the cut word hangs still before the halves let go
+  const LAND = 600; // the next word starts to arrive
   let word = 0;
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-  const done = (animation) => animation.finished.catch(() => {});
+  let stroke = 0;
+  const rand = (min, max) => min + Math.random() * (max - min);
 
-  // The cut rises to the right, from 68% of the height on the left to 34% on the right.
-  const LEFT = 0.68;
-  const RIGHT = 0.34;
-
-  function piece(text, clip) {
+  function layer(className, parent = stage) {
     const element = document.createElement("span");
-    element.className = "piece";
+    element.className = className;
     element.setAttribute("aria-hidden", "true");
-    element.textContent = text;
-    element.style.clipPath = clip;
-    stage.append(element);
+    parent.append(element);
     return element;
   }
 
-  async function slice() {
+  function slice() {
     const { width, height } = stage.getBoundingClientRect();
+    const em = parseFloat(getComputedStyle(stage).fontSize);
+    const accent = getComputedStyle(stage).color;
+    const [a, b] = cuts[stroke++ % cuts.length];
+    const drop = (b - a) * height; // negative when the cut rises
+    const length = Math.hypot(width, drop);
+    const ux = width / length; // unit vector along the blade
+    const uy = drop / length;
     const text = rotor.textContent;
-    const rise = (LEFT - RIGHT) * height;
-    const angle = Math.atan2(rise, width);
+    const layers = [];
+    const running = [];
+    const play = (element, frames, options) => {
+      running.push(element.animate(frames, { fill: "both", ...options }));
+    };
 
-    // The streak: a thin line of light drawn along the cut, a bit past both ends.
-    const streak = document.createElement("span");
-    streak.className = "streak";
-    const overshoot = 0.12 * width;
-    const length = Math.hypot(width, rise) + overshoot * 2;
-    streak.style.width = `${length}px`;
-    const startX = -overshoot * Math.cos(angle);
-    const startY = LEFT * height + overshoot * Math.sin(angle);
-    const place = `translate(${startX}px, ${startY}px) rotate(${-angle}rad)`;
-    stage.append(streak);
-    const draw = streak.animate(
+    // The blade: a needle of light that shoots along the cut, past both
+    // ends, then its tail catches up with the tip.
+    const lead = 0.25 * em;
+    const reach = length + lead + 0.45 * em;
+    const blade = layer("streak");
+    blade.style.width = `${reach}px`;
+    blade.style.transform = `translate(${-lead * ux}px, ${a * height - lead * uy}px) rotate(${Math.atan2(drop, width)}rad)`;
+    // The glow is on the outer element, so stretching the light inside
+    // does not squash it.
+    play(
+      layer("light", blade),
       [
-        { transform: `${place} scaleX(0)`, opacity: 1 },
-        { transform: `${place} scaleX(1)`, opacity: 1, offset: 0.55 },
-        { transform: `${place} scaleX(1)`, opacity: 0 },
+        { transform: "translateX(0px) scaleX(0)", opacity: 1, easing: "cubic-bezier(0.5, 0, 0.2, 1)" },
+        { transform: "translateX(0px) scaleX(1)", opacity: 1, offset: 0.45, easing: "cubic-bezier(0.5, 0, 0.9, 0.6)" },
+        { transform: `translateX(${reach}px) scaleX(0)`, opacity: 0.5 },
       ],
-      { duration: 420, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)", fill: "forwards" },
+      { duration: 300 },
     );
+    layers.push(blade);
 
-    await sleep(130);
     // The halves are padded around the ink; the cut runs through the line
     // box, so shift it by the padding. The pad edges extend the cut line.
-    const pad = parseFloat(getComputedStyle(rotor).paddingTop);
-    const side = parseFloat(getComputedStyle(rotor).paddingLeft);
-    const slope = rise / width;
-    const atLeft = pad + LEFT * height + side * slope;
-    const atRight = pad + RIGHT * height - side * slope;
-    const top = piece(text, `polygon(0 0, 100% 0, 100% ${atRight}px, 0 ${atLeft}px)`);
-    const bottom = piece(text, `polygon(0 ${atLeft}px, 100% ${atRight}px, 100% 100%, 0 100%)`);
-    stage.classList.add("cut");
-    // The halves slide apart along the cut, then drop and fade.
-    const along = 0.06 * height;
-    const fall = {
-      duration: 1100,
-      easing: "cubic-bezier(0.3, 0.6, 0.3, 1)",
-      fill: "forwards",
-    };
-    const fadeOut = (dx, dy, turn) => [
-      { transform: "none", opacity: 1, filter: "blur(0)" },
-      { transform: `translate(${dx * 0.35}px, ${dy * 0.15}px) rotate(${turn * 0.3}deg)`, opacity: 1, filter: "blur(0)", offset: 0.2 },
-      { transform: `translate(${dx * 0.7}px, ${dy * 0.55}px) rotate(${turn * 0.7}deg)`, opacity: 0.75, filter: "blur(1.5px)", offset: 0.55 },
-      { transform: `translate(${dx}px, ${dy}px) rotate(${turn}deg)`, opacity: 0, filter: "blur(6px)" },
-    ];
-    const flyTop = top.animate(fadeOut(along * 2.2, -0.32 * height, -5), fall);
-    const flyBottom = bottom.animate(fadeOut(-along * 1.6, 0.42 * height, 4), { ...fall, delay: 40 });
+    const padding = getComputedStyle(rotor);
+    const pad = parseFloat(padding.paddingTop);
+    const side = parseFloat(padding.paddingLeft);
+    const atLeft = pad + a * height - (side * drop) / width;
+    const atRight = pad + b * height + (side * drop) / width;
+    const hot = 0.05 * em; // the strip along the cut that glows white
+    const gravity = 7 * em;
 
-    await sleep(760);
+    // A half slips a little along the cut and hangs, then it is thrown:
+    // steady speed sideways, gravity down, a steady spin.
+    function half(clip, glow, middle, { slip, vx, vy, spin, wait }) {
+      const piece = layer("piece");
+      piece.style.transformOrigin = `50% ${pad + middle * height}px`;
+      const ink = layer("ink", piece);
+      ink.textContent = text;
+      ink.style.clipPath = clip;
+      const edge = layer("ink hot", piece);
+      edge.textContent = text;
+      edge.style.clipPath = glow;
+      layers.push(piece);
+
+      const air = 480;
+      const total = HOLD + wait + air;
+      const frames = [
+        { transform: "translate(0px, 0px) rotate(0deg)", opacity: 1, easing: "cubic-bezier(0.1, 0.9, 0.2, 1)" },
+        { transform: `translate(${slip * ux}px, ${slip * uy}px) rotate(0deg)`, opacity: 1, offset: (HOLD + wait) / total },
+      ];
+      for (let step = 1; step <= 10; step++) {
+        const part = step / 10;
+        const t = (part * air) / 1000;
+        const x = slip * ux + vx * t;
+        const y = slip * uy + vy * t + (gravity * t * t) / 2;
+        frames.push({
+          transform: `translate(${x}px, ${y}px) rotate(${spin * t}deg)`,
+          opacity: Math.max(0, 1 - Math.max(0, (part - 0.15) / 0.7) ** 1.3),
+          offset: (HOLD + wait + part * air) / total,
+        });
+      }
+      play(piece, frames, { duration: total, delay: HIT });
+      // The word flashes white when it is hit, and the cut edge cools last.
+      play(ink, [{ color: "#fff6dc" }, { color: accent }], { duration: 280, delay: HIT, fill: "forwards" });
+      play(edge, [{ opacity: 0 }, { opacity: 1, offset: 0.12 }, { opacity: 0 }], { duration: 560, delay: HIT - 30 });
+    }
+
+    const mid = (a + b) / 2;
+    // Long words turn slower, or their ends would swing across the page.
+    // The halves open like jaws on the side where the cut ends high.
+    const turn = -Math.sign(drop) * Math.min(1, (1.2 * em) / width);
+    half(
+      `polygon(0 0, 100% 0, 100% ${atRight + 0.5}px, 0 ${atLeft + 0.5}px)`,
+      `polygon(0 ${atLeft - hot}px, 100% ${atRight - hot}px, 100% ${atRight + 0.5}px, 0 ${atLeft + 0.5}px)`,
+      mid / 2,
+      { slip: 0.04 * em, vx: 2 * em * ux, vy: 2 * em * uy - 1.2 * em, spin: 34 * turn, wait: 0 },
+    );
+    half(
+      `polygon(0 ${atLeft}px, 100% ${atRight}px, 100% 100%, 0 100%)`,
+      `polygon(0 ${atLeft}px, 100% ${atRight}px, 100% ${atRight + hot}px, 0 ${atLeft + hot}px)`,
+      (1 + mid) / 2,
+      { slip: -0.015 * em, vx: -0.6 * em * ux, vy: -0.6 * em * uy + 0.3 * em, spin: -20 * turn, wait: 40 },
+    );
+
+    // The hit shakes the word across the cut.
+    const jolt = 0.028 * em;
+    play(
+      stage,
+      [0, 1, -0.6, 0.3, -0.12, 0].map((k) => ({ transform: `translate(${-uy * jolt * k}px, ${ux * jolt * k}px)` })),
+      { duration: 260, delay: HIT - 20, easing: "ease-out", fill: "none" },
+    );
+
+    // Sparks leave the cut as the blade passes, mostly the way it goes and
+    // most of them near the end of the stroke.
+    const sparks = Math.round(Math.min(22, 10 + (width / em) * 2));
+    for (let i = 0; i < sparks; i++) {
+      const at = 1 - 0.9 * Math.random() ** 2;
+      const speed = rand(1.5, 6) * em;
+      const across = rand(-2, 2) * em;
+      const vx = ux * speed - uy * across;
+      const vy = uy * speed + ux * across - rand(0, 0.8) * em;
+      const pull = 9 * em;
+      const life = rand(240, 520);
+      const spark = layer("spark");
+      spark.style.width = `${rand(0.1, 0.3) * em}px`;
+      const frames = [];
+      for (let step = 0; step <= 6; step++) {
+        const part = step / 6;
+        const t = (part * life) / 1000;
+        const x = at * width + vx * t;
+        const y = a * height + at * drop + vy * t + (pull * t * t) / 2;
+        const heading = Math.atan2(vy + pull * t, vx);
+        frames.push({
+          transform: `translate(${x}px, ${y}px) rotate(${heading}rad) scaleX(${1 - 0.75 * part})`,
+          opacity: 1 - part ** 3,
+        });
+      }
+      play(spark, frames, { duration: life, delay: 25 + at * 110, fill: "forwards" });
+      layers.push(spark);
+    }
+
+    // The next word takes the place at once, hidden, and its letters jump
+    // in one by one over it, hot at first.
     word = (word + 1) % words.length;
     rotor.textContent = words[word];
-    stage.classList.remove("cut");
-    rotor.animate(
-      [
-        { opacity: 0, filter: "blur(8px)", transform: "translateY(0.06em) scale(0.98)" },
-        { opacity: 1, filter: "blur(0)", transform: "none" },
-      ],
-      { duration: 700, easing: "cubic-bezier(0.2, 0.8, 0.2, 1)" },
-    );
-    await Promise.all([done(draw), done(flyTop), done(flyBottom)]);
-    streak.remove();
-    top.remove();
-    bottom.remove();
+    stage.classList.add("cut");
+    const fresh = layer("ink", layer("piece"));
+    layers.push(fresh.parentElement);
+    const letters = [...words[word]];
+    const gap = Math.min(46, 300 / letters.length);
+    letters.forEach((character, i) => {
+      const letter = layer("letter", fresh);
+      letter.textContent = character;
+      play(
+        letter,
+        [
+          { transform: "translateY(0.42em) rotate(9deg)", opacity: 0, color: "#fff6dc" },
+          { opacity: 1, color: "#fff6dc", offset: 0.45 },
+          { transform: "translateY(0) rotate(0deg)", opacity: 1, color: accent },
+        ],
+        { duration: 560, delay: LAND + i * gap, easing: "cubic-bezier(0.2, 1.5, 0.35, 1)" },
+      );
+    });
+
+    return Promise.all(running.map((animation) => animation.finished.catch(() => {}))).then(() => {
+      stage.classList.remove("cut");
+      layers.forEach((element) => element.remove());
+    });
   }
 
+  let poke = () => {};
+  stage.addEventListener("click", () => poke());
   (async function loop() {
     for (;;) {
-      await sleep(word === 0 ? 4200 : 2400);
-      await slice();
+      await new Promise((resolve) => {
+        poke = resolve;
+        setTimeout(resolve, word === 0 ? 4200 : 2400);
+      });
+      if (!document.hidden) await slice();
     }
   })();
 }
