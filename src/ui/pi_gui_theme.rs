@@ -5,19 +5,19 @@
 //! and of its preset table; the selected preset and mode are read from
 //! pi-gui's `ui-state.json`, which is only read, never written.
 
-use gpui::{Hsla, Rgba};
+use gpui::{Hsla, Rgba, SharedString};
 
 use super::theme::{SyntaxColors, Theme, ThemeColors};
 
 type Rgb = [f64; 3];
 
-struct Seed {
-    surface: &'static str,
-    ink: &'static str,
-    accent: &'static str,
-    added: &'static str,
-    removed: &'static str,
-    warning: &'static str,
+pub struct Seed<'a> {
+    pub surface: &'a str,
+    pub ink: &'a str,
+    pub accent: &'a str,
+    pub added: &'a str,
+    pub removed: &'a str,
+    pub warning: &'a str,
 }
 
 const fn seed(
@@ -27,7 +27,7 @@ const fn seed(
     added: &'static str,
     removed: &'static str,
     warning: &'static str,
-) -> Seed {
+) -> Seed<'static> {
     Seed {
         surface,
         ink,
@@ -39,7 +39,7 @@ const fn seed(
 }
 
 /// `(id, name, light, dark)`, in pi-gui's order.
-const PRESETS: &[(&str, &str, Seed, Seed)] = &[
+const PRESETS: &[(&str, &str, Seed<'static>, Seed<'static>)] = &[
     (
         "default",
         "Default",
@@ -143,7 +143,28 @@ pub fn theme(preset_id: &str, dark: bool) -> Theme {
     let tokens = Tokens::derive(seed, !dark);
     let mut colors = tokens.colors();
     colors.syntax = SyntaxColors::for_pi_gui_preset(preset_id, dark);
-    Theme { name, colors }
+    Theme {
+        name: SharedString::new_static(name),
+        colors,
+    }
+}
+
+/// pi-gui's default seed for a variant, for colors a custom theme leaves out.
+pub fn default_seed(dark: bool) -> &'static Seed<'static> {
+    let (_, _, light_seed, dark_seed) = &PRESETS[0];
+    if dark { dark_seed } else { light_seed }
+}
+
+/// All app colors derived from six seed colors (`#rrggbb`), the way pi-gui
+/// derives its presets. Syntax colors are GitHub's for the variant.
+pub fn colors_from_seed(seed: &Seed, dark: bool) -> ThemeColors {
+    let mut colors = Tokens::derive(seed, !dark).colors();
+    colors.syntax = if dark {
+        SyntaxColors::github_dark()
+    } else {
+        SyntaxColors::github_light()
+    };
+    colors
 }
 
 /// The subset of pi-gui's CSS tokens the app uses.

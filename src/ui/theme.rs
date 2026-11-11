@@ -1,4 +1,4 @@
-use gpui::{App, Global, Hsla, rgba};
+use gpui::{App, Global, Hsla, SharedString, rgba};
 
 /// Semantic color tokens, named after Zed's theme schema so components read
 /// the same way as Zed's `ui` crate.
@@ -201,7 +201,7 @@ impl SyntaxColors {
 }
 
 pub struct Theme {
-    pub name: &'static str,
+    pub name: SharedString,
     pub colors: ThemeColors,
 }
 
@@ -218,7 +218,7 @@ impl Theme {
     /// The built-in Ayu themes, derived the way pi-gui derives its Ayu preset.
     pub fn ayu(dark: bool) -> Self {
         let mut theme = super::pi_gui_theme::theme("ayu", dark);
-        theme.name = if dark { "Ayu Dark" } else { "Ayu Light" };
+        theme.name = SharedString::new_static(if dark { "Ayu Dark" } else { "Ayu Light" });
         theme
     }
 
@@ -226,7 +226,7 @@ impl Theme {
     /// MIT, Copyright (c) 2016 Ike Ku).
     pub fn ayu_dark() -> Self {
         Self {
-            name: "Ayu Dark",
+            name: SharedString::new_static("Ayu Dark"),
             colors: ThemeColors {
                 title_bar_background: hex(0x313337ff),
                 title_bar_inactive_background: hex(0x1f2127ff),
@@ -270,7 +270,7 @@ impl Theme {
     /// MIT, Copyright (c) 2014 GitHub Inc.).
     pub fn one_dark() -> Self {
         Self {
-            name: "One Dark",
+            name: SharedString::new_static("One Dark"),
             colors: ThemeColors {
                 title_bar_background: hex(0x3b414dff),
                 title_bar_inactive_background: hex(0x2e343eff),

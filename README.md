@@ -64,7 +64,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.
 - A context ring next to the model: context used and when pi compacts, prompt cache hit rate and expiry, subscription plan limits, and token totals for the session.
 - Compaction shown in the transcript with token counts and the summary.
-- Ayu Dark and Ayu Light themes, following the system's light or dark mode by default.
+- Ayu Dark and Ayu Light themes, following the system's light or dark mode by default, plus your own themes (six colors are enough) and Zed themes.
 - Sessions can be renamed, hidden, closed (⌘W stops their pi, the session stays) or deleted (to the Trash).
 - Updates for pi and its extensions next to the pi version, with versions and whether this app supports the new pi. Applied with pi's own `pi update`, only when you click.
 
@@ -96,11 +96,28 @@ On Linux `⌘` is `Ctrl` and `⌥` is `Alt`, with one exception: compact is `Ctr
 
 ```jsonc
 {
-  "theme": "system",              // or "Ayu Dark", "Ayu Light"
+  "theme": "system",              // or "Ayu Dark", "Ayu Light", or one of your themes
   "ui_font_family": ".SystemUIFont",
   "agent_font_size": 14,          // messages and answers
   "buffer_font_family": "JetBrains Mono NL",  // code; bundled with the app
   "buffer_font_size": 12,
+}
+```
+
+### Themes
+
+A theme is a JSON file in the `themes` folder next to `settings.json`; "New theme" on the Settings page creates one and opens it. Six colors are enough, the rest is derived from them. `style` overrides single colors with [Zed's theme keys](https://zed.dev/docs/themes), and a Zed theme file dropped into the folder works as is. Changes apply on save.
+
+```jsonc
+{
+  "name": "Midnight",
+  "background": "#14161b",
+  "text": "#e3e1db",
+  "accent": "#7aa2f7",
+  "added": "#9ece6a",
+  "removed": "#f7768e",
+  "warning": "#e0af68",
+  "style": { "panel.background": "#101216", "syntax": { "keyword": "#bb9af7" } },
 }
 ```
 

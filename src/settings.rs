@@ -12,11 +12,11 @@ use serde_json::Value;
 
 use crate::platform;
 use crate::ui::Theme;
+use crate::ui::user_theme::{self, UserTheme};
 
 pub const THEME_SYSTEM: &str = "system";
 pub const THEME_DARK: &str = "Ayu Dark";
 pub const THEME_LIGHT: &str = "Ayu Light";
-pub const THEMES: [&str; 2] = [THEME_DARK, THEME_LIGHT];
 const DEFAULT_BUFFER_FONT: &str = "JetBrains Mono NL";
 /// Ships with macOS; used when the configured code font is missing.
 const FALLBACK_BUFFER_FONT: &str = "Menlo";
@@ -28,7 +28,9 @@ const DEFAULT_FILE: &str = r#"// Pi GPUI settings.
 // saved, and the Settings page (⌘, or Ctrl+,) writes here too.
 // Comments and trailing commas are allowed.
 {
-  // "system" follows the system light or dark mode, or pick a theme: "Ayu Dark", "Ayu Light".
+  // "system" follows the system light or dark mode, or pick a theme: "Ayu Dark",
+  // "Ayu Light", or the name of one of your themes (JSON files in the themes
+  // folder next to this file; the Settings page can create one).
   "theme": "system",
 
   // Font of the interface. ".SystemUIFont" is the system font.
@@ -91,9 +93,11 @@ impl Settings {
                 .unwrap_or(fallback)
         };
         Self {
+            // Any name: custom themes are looked up when the theme is applied.
             theme: value["theme"]
                 .as_str()
-                .filter(|theme| *theme == THEME_SYSTEM || THEMES.contains(theme))
+                .map(str::trim)
+                .filter(|theme| !theme.is_empty())
                 .map_or(defaults.theme, str::to_string),
             ui_font_family: text("ui_font_family", defaults.ui_font_family),
             agent_font_size: size("agent_font_size", defaults.agent_font_size),
@@ -123,6 +127,81 @@ pub struct SettingsFile {
 }
 
 impl Global for SettingsFile {}
+
+/// Custom themes from the themes folder, read again when a file in it changes.
+pub struct UserThemes {
+    pub directory: PathBuf,
+    pub themes: Vec<UserTheme>,
+    /// Files that could not be read as themes.
+    pub errors: Vec<String>,
+    /// Why the theme in the settings is not shown (e.g. no such theme).
+    pub theme_error: Option<String>,
+    /// File names and modification times at the last read.
+    stamp: Vec<(PathBuf, Option<SystemTime>)>,
+}
+
+impl Global for UserThemes {}
+
+impl UserThemes {
+    fn stamp(directory: &std::path::Path) -> Vec<(PathBuf, Option<SystemTime>)> {
+        let mut stamp: Vec<_> = std::fs::read_dir(directory)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| {
+                let modified = entry.metadata().and_then(|meta| meta.modified()).ok();
+                (entry.path(), modified)
+            })
+            .collect();
+        stamp.sort();
+        stamp
+    }
+
+    /// Reads the folder again if anything in it changed; true when it did.
+    fn refresh(&mut self) -> bool {
+        let stamp = Self::stamp(&self.directory);
+        if stamp == self.stamp {
+            return false;
+        }
+        self.stamp = stamp;
+        (self.themes, self.errors) = user_theme::load_dir(&self.directory);
+        for error in &self.errors {
+            eprintln!("pi-gpui: theme not loaded: {error}");
+        }
+        true
+    }
+}
+
+pub fn themes_directory() -> PathBuf {
+    crate::sessions::app_data_directory()
+        .unwrap_or_default()
+        .join("themes")
+}
+
+/// Writes a new theme file from the template; returns its path and name.
+pub fn create_theme_file() -> Result<(PathBuf, String), String> {
+    let directory = themes_directory();
+    std::fs::create_dir_all(&directory).map_err(|error| error.to_string())?;
+    let path = (1..)
+        .map(|number| {
+            directory.join(if number == 1 {
+                "my-theme.json".to_string()
+            } else {
+                format!("my-theme-{number}.json")
+            })
+        })
+        .find(|path| !path.exists())
+        .unwrap_or_default();
+    let name = path
+        .file_stem()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .replace("my-theme", "My Theme")
+        .replace('-', " ");
+    let text = user_theme::TEMPLATE.replace("\"My Theme\"", &format!("\"{name}\""));
+    std::fs::write(&path, text).map_err(|error| error.to_string())?;
+    Ok((path, name))
+}
 
 pub fn path() -> PathBuf {
     crate::sessions::app_data_directory()
@@ -179,11 +258,24 @@ pub fn init(cx: &mut App) {
         modified: None,
         _watch: watch,
     });
+    let mut themes = UserThemes {
+        directory: themes_directory(),
+        themes: Vec::new(),
+        errors: Vec::new(),
+        theme_error: None,
+        stamp: Vec::new(),
+    };
+    themes.refresh();
+    cx.set_global(themes);
     reload_if_changed(cx);
     apply_theme(cx);
 }
 
 fn reload_if_changed(cx: &mut App) {
+    // A changed theme file shows at once when it is the theme in use.
+    if cx.global_mut::<UserThemes>().refresh() {
+        apply_theme(cx);
+    }
     let file = cx.global::<SettingsFile>();
     let modified = std::fs::metadata(&file.path)
         .and_then(|metadata| metadata.modified())
@@ -242,12 +334,28 @@ pub fn apply_theme_for(appearance: gpui::WindowAppearance, cx: &mut App) {
         appearance,
         gpui::WindowAppearance::Dark | gpui::WindowAppearance::VibrantDark
     );
-    let dark = match Settings::get(cx).theme.as_str() {
-        THEME_DARK => true,
-        THEME_LIGHT => false,
-        _ => system_is_dark,
+    let name = Settings::get(cx).theme.clone();
+    let mut theme_error = None;
+    let theme = match name.as_str() {
+        THEME_SYSTEM => Theme::ayu(system_is_dark),
+        THEME_DARK => Theme::ayu(true),
+        THEME_LIGHT => Theme::ayu(false),
+        name => match cx
+            .global::<UserThemes>()
+            .themes
+            .iter()
+            .find(|theme| theme.name.eq_ignore_ascii_case(name))
+        {
+            Some(theme) => theme.theme(),
+            None => {
+                theme_error = Some(format!(
+                    "No theme \"{name}\" in the themes folder; following the system appearance."
+                ));
+                Theme::ayu(system_is_dark)
+            }
+        },
     };
-    let theme = Theme::ayu(dark);
+    cx.global_mut::<UserThemes>().theme_error = theme_error;
     platform::set_app_appearance(theme.is_dark());
     cx.set_global(theme);
     cx.refresh_windows();
@@ -279,7 +387,7 @@ fn parse(text: &str) -> Result<Settings, String> {
 /// JSON with comments and trailing commas → plain JSON. Positions of the
 /// remaining characters are kept (comments become spaces), so parse errors
 /// point at the right line.
-fn strip_jsonc(text: &str) -> String {
+pub fn strip_jsonc(text: &str) -> String {
     let bytes = text.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
     let mut index = 0;
@@ -467,8 +575,7 @@ mod tests {
     #[test]
     fn invalid_values_fall_back_one_by_one() {
         let settings =
-            parse(r#"{ "theme": "Nope", "agent_font_size": 16, "buffer_font_size": "big" }"#)
-                .unwrap();
+            parse(r#"{ "theme": 7, "agent_font_size": 16, "buffer_font_size": "big" }"#).unwrap();
         assert_eq!(settings.theme, THEME_SYSTEM);
         assert_eq!(settings.agent_font_size, 16.);
         assert_eq!(settings.buffer_font_size, 12.);

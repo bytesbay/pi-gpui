@@ -3230,7 +3230,7 @@ impl HubView {
         let path = file.path.clone();
         let error = file.error.clone();
 
-        let row = |title: &'static str, description: &'static str, control: AnyElement| {
+        let row = |title: &'static str, description: SharedString, control: AnyElement| {
             h_flex()
                 .gap(px(24.))
                 .py(px(12.))
@@ -3302,6 +3302,118 @@ impl HubView {
                     }))
             }))
             .into_any_element();
+
+        let user_themes = cx.global::<settings::UserThemes>();
+        let themes_directory = user_themes.directory.clone();
+        let theme_names: Vec<SharedString> = user_themes
+            .themes
+            .iter()
+            .map(|theme| theme.name.clone())
+            .collect();
+        let theme_problems: Vec<String> = user_themes
+            .theme_error
+            .iter()
+            .cloned()
+            .chain(
+                user_themes
+                    .errors
+                    .iter()
+                    .map(|error| format!("Theme not loaded: {error}")),
+            )
+            .collect();
+        let custom_chips = (!theme_names.is_empty()).then(|| {
+            h_flex()
+                .flex_wrap()
+                .max_w(px(320.))
+                .p(px(2.))
+                .gap(px(2.))
+                .rounded(px(7.))
+                .border_1()
+                .border_color(colors.border_variant)
+                .bg(colors.element_background)
+                .children(theme_names.into_iter().map(|name| {
+                    let selected = current.theme.eq_ignore_ascii_case(&name);
+                    div()
+                        .id(ElementId::Name(format!("user-theme-{name}").into()))
+                        .h(px(24.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.))
+                        .border_1()
+                        .cursor_pointer()
+                        .when(selected, |this| {
+                            this.bg(colors.elevated_surface_background)
+                                .border_color(colors.border)
+                        })
+                        .when(!selected, |this| {
+                            this.border_color(gpui::transparent_black())
+                                .hover(|style| style.bg(colors.ghost_element_hover))
+                        })
+                        .on_click({
+                            let name = name.clone();
+                            cx.listener(move |_, _, _, cx| {
+                                settings::set(cx, "theme", json!(name.to_string()));
+                            })
+                        })
+                        .child(Label::new(name).size(LabelSize::Small).color(if selected {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        }))
+                }))
+        });
+        let custom_control = h_flex()
+            .gap(px(6.))
+            .children(custom_chips)
+            .child(
+                Button::new("new-theme", "New theme")
+                    .icon(IconName::Plus)
+                    .on_click(
+                        cx.listener(|this, _, _, cx| match settings::create_theme_file() {
+                            Ok((path, name)) => {
+                                settings::set(cx, "theme", json!(name));
+                                open_in_editor(&path);
+                            }
+                            Err(error) => {
+                                this.notice = Some((
+                                    format!("Could not create a theme: {error}"),
+                                    Color::Warning,
+                                ));
+                                cx.notify();
+                            }
+                        }),
+                    ),
+            )
+            .child(
+                IconButton::new("open-themes-folder", IconName::FolderOpen)
+                    .tooltip(Tooltip::text("Open the themes folder"))
+                    .on_click(move |_, _, _| {
+                        std::fs::create_dir_all(&themes_directory).ok();
+                        platform::reveal_in_file_manager(&themes_directory);
+                    }),
+            )
+            .into_any_element();
+        let themes_label = sessions::display_path(&settings::themes_directory());
+        let theme_banner = (!theme_problems.is_empty()).then(|| {
+            v_flex()
+                .mt(px(8.))
+                .gap(px(4.))
+                .px(px(12.))
+                .py(px(8.))
+                .rounded(px(6.))
+                .bg(colors.warning_background)
+                .children(theme_problems.into_iter().map(|problem| {
+                    h_flex()
+                        .gap(px(8.))
+                        .child(
+                            Icon::new(IconName::Warning)
+                                .size(IconSize::XSmall)
+                                .color(Color::Warning),
+                        )
+                        .child(Label::new(problem).size(LabelSize::Small))
+                }))
+        });
 
         let stepper = |key: &'static str, value: f32, cx: &mut Context<Self>| {
             let step = |delta: f32| {
@@ -3427,28 +3539,37 @@ impl HubView {
                     .child(group("Appearance"))
                     .child(row(
                         "Theme",
-                        "System follows the system light or dark mode and switches between the two Ayu themes.",
+                        "System follows the system light or dark mode and switches between the two Ayu themes.".into(),
                         theme_control,
                     ))
+                    .child(row(
+                        "Your themes",
+                        format!(
+                            "JSON files in {themes_label}. Six colors are enough; Zed themes work too. Edits apply on save."
+                        )
+                        .into(),
+                        custom_control,
+                    ))
+                    .children(theme_banner)
                     .child(group("Fonts"))
                     .child(row(
                         "Interface font",
-                        "Font family of the whole interface. \".SystemUIFont\" is the system font.",
+                        "Font family of the whole interface. \".SystemUIFont\" is the system font.".into(),
                         field("ui_font_family", &page.ui_font, cx),
                     ))
                     .child(row(
                         "Message size",
-                        "Text size of your messages and the agent's answers.",
+                        "Text size of your messages and the agent's answers.".into(),
                         stepper("agent_font_size", current.agent_font_size, cx),
                     ))
                     .child(row(
                         "Code font",
-                        "Font family of code blocks, tool output and inline code.",
+                        "Font family of code blocks, tool output and inline code.".into(),
                         field("buffer_font_family", &page.code_font, cx),
                     ))
                     .child(row(
                         "Code size",
-                        "Text size of code blocks and tool output.",
+                        "Text size of code blocks and tool output.".into(),
                         stepper("buffer_font_size", current.buffer_font_size, cx),
                     )),
             )
