@@ -3239,7 +3239,9 @@ impl HubView {
                 .child(
                     v_flex()
                         .flex_1()
-                        .min_w(px(0.))
+                        // A wide control (many themes) must not squeeze the
+                        // text into a column of single letters.
+                        .min_w(px(160.))
                         .gap(px(2.))
                         .child(Label::new(title))
                         .child(
@@ -3248,7 +3250,7 @@ impl HubView {
                                 .color(Color::Muted),
                         ),
                 )
-                .child(div().flex_none().child(control))
+                .child(div().min_w(px(0.)).child(control))
                 .into_any_element()
         };
         let group = |title: &'static str| {
@@ -3324,6 +3326,7 @@ impl HubView {
         let custom_chips = (!theme_names.is_empty()).then(|| {
             h_flex()
                 .flex_wrap()
+                .min_w(px(0.))
                 .max_w(px(320.))
                 .p(px(2.))
                 .gap(px(2.))
@@ -3364,6 +3367,8 @@ impl HubView {
                 }))
         });
         let custom_control = h_flex()
+            .flex_wrap()
+            .justify_end()
             .gap(px(6.))
             .children(custom_chips)
             .child(
