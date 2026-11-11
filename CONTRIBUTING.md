@@ -9,7 +9,7 @@ cargo run [-- /path/to/project]
 cargo test && cargo clippy --all-targets
 ```
 
-You need a Mac with Xcode and pi 1.4 or newer. Rust is pinned in `rust-toolchain.toml`.
+You need pi 1.4 or newer and either a Mac with Xcode or Linux with the build libraries (`script/linux-deps.sh` installs them on Debian and Ubuntu). Rust is pinned in `rust-toolchain.toml`. Changes to shared code should keep both systems working: CI builds and tests the Linux app, and [docs/LINUX_VM.md](docs/LINUX_VM.md) sets up a Linux desktop VM on a Mac.
 
 ## Before you write code
 

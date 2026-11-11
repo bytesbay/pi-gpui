@@ -109,6 +109,13 @@ code { font-size: 0.88em; color: var(--ink-strong); background: var(--panel); pa
   transition: transform 0.2s, background 0.2s, border-color 0.2s, color 0.2s;
 }
 .btn svg { width: 16px; height: 16px; }
+.os-icon { width: 1em; height: 1em; flex: none; }
+.btn .os-icon { width: 15px; height: 15px; margin-top: -2px; }
+.os { display: inline-flex; align-items: center; gap: 5px; }
+.os + .os { margin-left: 4px; }
+.card .os-label { display: flex; align-items: center; gap: 7px; margin: 18px 0 8px; font-size: 12px; color: var(--muted); scroll-margin-top: 96px; }
+.card .os-label a { color: var(--ink); }
+.card .os-label + .cmd { margin-top: 0; }
 .btn:hover { transform: translateY(-1px); background: #fff; }
 .btn-ghost { background: transparent; color: var(--ink-strong); border-color: var(--line-2); }
 .btn-ghost:hover { background: rgba(255, 255, 255, 0.04); border-color: var(--muted); }

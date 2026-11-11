@@ -2,7 +2,7 @@
 
 [English](../README.md) | 中文
 
-[pi](https://github.com/earendil-works/pi) 编程智能体的原生 GUI 桌面客户端，用 Rust 和 [GPUI](https://www.gpui.rs)（Zed 编辑器使用的 UI 框架）编写。目前支持 macOS，接下来是 Linux。没有 Electron，也没有 webview。它通过 RPC 运行你已经安装的 pi，所以你的模型、扩展、技能和会话都和在终端里一样可用。
+[pi](https://github.com/earendil-works/pi) 编程智能体的原生 GUI 桌面客户端，用 Rust 和 [GPUI](https://www.gpui.rs)（Zed 编辑器使用的 UI 框架）编写。支持 macOS 和 Linux。没有 Electron，也没有 webview。它通过 RPC 运行你已经安装的 pi，所以你的模型、扩展、技能和会话都和在终端里一样可用。
 
 应用大小 16 MB，窗口约 0.4 秒出现，空闲时占用约 75 MB 内存。基于 Electron 的 pi 客户端需要 0.5 到 1.1 秒和 190 到 430 MB（[测试方法](BENCHMARKS.md)）。
 
@@ -14,13 +14,23 @@
 
 ## 安装
 
+**macOS**（Apple 芯片，macOS 13 或更高版本）
+
 ```sh
 brew install --cask bytesbay/tap/pi-gpui
 ```
 
-也可以从 [Releases](https://github.com/bytesbay/pi-gpui/releases) 下载 `Pi-GPUI-*.zip`，把应用拖进「应用程序」。安装包经过 Apple 签名和公证。应用会自动更新：新版本下载完成后，标题栏会出现 "Restart to update"。需要 Apple 芯片和 macOS 13 或更高版本。
+也可以从 [Releases](https://github.com/bytesbay/pi-gpui/releases) 下载 `Pi-GPUI-*.zip`，把应用拖进「应用程序」。安装包经过 Apple 签名和公证。
 
-暂不支持 Linux 和 Windows。Linux 版本在计划中：关注或给 [#5](https://github.com/bytesbay/pi-gpui/issues/5) 点 👍，发布时会收到通知。
+**Linux**（x86_64 和 arm64，测试版）
+
+```sh
+curl -fsSL https://pi-gpui.dev/install.sh | sh
+```
+
+脚本把应用装到 `~/.local/pi-gpui.app`，不需要 root。支持 X11 和 Wayland，需要 glibc 2.35 或更高版本（Ubuntu 22.04、Debian 12、Fedora 36）和 Vulkan 驱动。Linux 上快捷键用 `Ctrl` 代替 `⌘`，设置在 `~/.config/pi-gpui`。目前只在 arm64 虚拟机里的 Ubuntu 24.04 上测试过，遇到问题请在 [#5](https://github.com/bytesbay/pi-gpui/issues/5) 反馈。
+
+两个系统上应用都会自动更新：新版本下载完成后，标题栏会出现 "Restart to update"。暂不支持 Windows。
 
 需要 pi 1.4 或更高的 1.x 版本。应用会在 `PI_EXECUTABLE`、`PATH` 或登录 shell 中查找 pi（所以 nvm 安装的 pi 也能找到）。
 
@@ -51,7 +61,7 @@ pi install npm:pi-gpui
 - Markdown 回答的样式参考 Zed 的 agent 面板，代码有语法高亮，所有文字都可以选中。
 - 模型旁边的上下文环：已用上下文和压缩时机、提示缓存命中率和过期时间、订阅额度、会话的 token 总数。
 - 压缩会显示在对话中，带 token 数和摘要。
-- Ayu Dark 和 Ayu Light 主题，默认跟随 macOS。
+- Ayu Dark 和 Ayu Light 主题，默认跟随系统的浅色或深色模式。
 - 会话可以重命名、隐藏、关闭（⌘W 停止它的 pi，会话保留）或删除（移到废纸篓）。
 - pi 和扩展的更新显示在 pi 版本旁边，并说明应用是否支持新的 pi。只有你点击时才会用 pi 自己的 `pi update` 更新。
 

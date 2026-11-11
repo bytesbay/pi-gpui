@@ -18,8 +18,8 @@ A plugin is a folder with `plugin.json` and a program written in any language. T
 
 The app looks for plugins in:
 
-1. `~/Library/Application Support/pi-gpui/plugins/<plugin>/`;
-2. `Contents/Resources/plugins/` in the app bundle, or `plugins/` in the repository when run from a build (built-in plugins; none ship today).
+1. `~/Library/Application Support/pi-gpui/plugins/<plugin>/` (on Linux `~/.config/pi-gpui/plugins/<plugin>/`);
+2. `Contents/Resources/plugins/` in the app bundle (on Linux `share/pi-gpui/plugins/` in `pi-gpui.app`), or `plugins/` in the repository when run from a build (built-in plugins; none ship today).
 
 Later, plugins will be installable as pi packages (`pi install`): a plugin folder inside the package, referenced by our key in the package manifest.
 
@@ -52,7 +52,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
   - `id`: must start with the plugin id and a dot.
   - `placement`: where to show a button. `composer` (the message field) is supported today.
   - `icon`: `microphone`, `terminal`, `file`, `sparkle`, `message`, `tool`, `folder`, `refresh`, `check`, `info`, `warning`.
-  - `keybinding`: a GPUI keystroke (`cmd-shift-d`).
+  - `keybinding`: a GPUI keystroke (`cmd-shift-d`). On Linux `cmd` becomes `ctrl`, so one manifest works on both systems.
 - `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
 - `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.

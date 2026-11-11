@@ -19,6 +19,18 @@ fetch("https://api.github.com/repos/bytesbay/pi-gpui/releases/latest")
   })
   .catch(() => {});
 
+// On Linux the install command is the main button, not the Mac download.
+if (/Linux/.test(navigator.userAgent) && !/Android/.test(navigator.userAgent)) {
+  document.querySelectorAll("[data-os]").forEach((el) => {
+    el.classList.toggle("btn-ghost", el.dataset.os !== "linux");
+  });
+  document.querySelectorAll(".nav [data-download]").forEach((el) => {
+    el.removeAttribute("data-download");
+    el.href = "#linux";
+    el.textContent = "Install";
+  });
+}
+
 // "A native app for ___": a katana cuts the word in two, like the logo.
 // The blade flashes through, the halves hold for a beat, then fly apart
 // with sparks, and the next word lands letter by letter. A click on the

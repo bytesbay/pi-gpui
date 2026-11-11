@@ -1,7 +1,7 @@
 {
   "name": "pi-gpui",
-  "version": "0.1.0",
-  "description": "/gpui: continue your terminal pi session in Pi GPUI, the native Mac app for pi (Rust + GPUI)",
+  "version": "0.2.0",
+  "description": "/gpui: continue your terminal pi session in Pi GPUI, the native desktop app for pi on macOS and Linux (Rust + GPUI)",
   "keywords": [
     "pi-package",
     "pi",
@@ -9,6 +9,7 @@
     "pi-coding-agent",
     "gpui",
     "macos",
+    "linux",
     "desktop",
     "gui",
     "coding-agent"
