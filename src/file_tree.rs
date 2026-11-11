@@ -69,6 +69,8 @@ struct GitState {
     ignored: Vec<PathBuf>,
     /// Folders holding a changed file, colored like the change.
     changed_dirs: HashMap<PathBuf, FileStatus>,
+    /// Lines added and removed per changed text file.
+    line_changes: HashMap<PathBuf, (usize, usize)>,
 }
 
 impl GitState {
@@ -414,6 +416,15 @@ impl FilesPanel {
                 } else {
                     div().w(px(12.)).into_any_element()
                 };
+                let (additions, deletions) = if entry.is_dir {
+                    (0, 0)
+                } else {
+                    self.git
+                        .line_changes
+                        .get(&entry.path)
+                        .copied()
+                        .unwrap_or_default()
+                };
                 let menu_path = entry.path.clone();
                 Some(
                     h_flex()
@@ -451,6 +462,20 @@ impl FilesPanel {
                                     .truncate(),
                             ),
                         )
+                        .when(additions > 0, |this| {
+                            this.child(
+                                Label::new(format!("+{additions}"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Success),
+                            )
+                        })
+                        .when(deletions > 0, |this| {
+                            this.child(
+                                Label::new(format!("−{deletions}"))
+                                    .size(LabelSize::XSmall)
+                                    .color(Color::Error),
+                            )
+                        })
                         .into_any_element(),
                 )
             })
@@ -675,7 +700,48 @@ fn git_state(workspace: &Path) -> GitState {
     let Some(status) = run(&["status", "--porcelain=v1", "-z", "--ignored"]) else {
         return GitState::default();
     };
-    parse_status(&String::from_utf8_lossy(&status), &root)
+    let mut state = parse_status(&String::from_utf8_lossy(&status), &root);
+    if let Some(numstat) = run(&["diff", "HEAD", "--numstat", "-z", "--no-renames"]) {
+        state.line_changes = parse_numstat(&String::from_utf8_lossy(&numstat), &root);
+    }
+    for (path, status) in &state.status {
+        if *status == FileStatus::Untracked
+            && let Some(lines) = count_lines(path)
+        {
+            state.line_changes.insert(path.clone(), (lines, 0));
+        }
+    }
+    state
+}
+
+/// `git diff --numstat -z` lines: `added\tdeleted\tpath\0`. Binary files
+/// report `-` and are skipped.
+fn parse_numstat(output: &str, root: &Path) -> HashMap<PathBuf, (usize, usize)> {
+    output
+        .split('\0')
+        .filter_map(|record| {
+            let mut fields = record.splitn(3, '\t');
+            let additions = fields.next()?.trim().parse().ok()?;
+            let deletions = fields.next()?.parse().ok()?;
+            let path = fields.next().filter(|path| !path.is_empty())?;
+            Some((root.join(path), (additions, deletions)))
+        })
+        .filter(|(_, (additions, deletions))| additions + deletions > 0)
+        .collect()
+}
+
+/// Line count of a small untracked text file, all of it new.
+fn count_lines(path: &Path) -> Option<usize> {
+    const MAX_BYTES: u64 = 1024 * 1024;
+    if fs::metadata(path).ok()?.len() > MAX_BYTES {
+        return None;
+    }
+    let bytes = fs::read(path).ok()?;
+    if bytes.is_empty() || bytes.contains(&0) {
+        return None;
+    }
+    let newlines = bytes.iter().filter(|&&byte| byte == b'\n').count();
+    Some(newlines + usize::from(!bytes.ends_with(b"\n")))
 }
 
 fn parse_status(output: &str, root: &Path) -> GitState {
@@ -766,5 +832,13 @@ mod tests {
         );
         assert!(state.is_ignored(Path::new("/repo/target/debug/app")));
         assert!(!state.is_ignored(Path::new("/repo/src/main.rs")));
+    }
+
+    #[test]
+    fn numstat_counts_text_files_and_skips_binary() {
+        let root = Path::new("/repo");
+        let changes = parse_numstat("3\t1\tsrc/main.rs\0-\t-\tlogo.png\0", root);
+        assert_eq!(changes.get(Path::new("/repo/src/main.rs")), Some(&(3, 1)));
+        assert_eq!(changes.get(Path::new("/repo/logo.png")), None);
     }
 }
