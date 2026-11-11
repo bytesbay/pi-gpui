@@ -1580,6 +1580,26 @@ impl HubView {
         if tabs.is_empty() {
             return None;
         }
+        let close_all = (tabs.len() > 1).then(|| {
+            div()
+                .flex_none()
+                .h_full()
+                .px(px(4.))
+                .flex()
+                .items_center()
+                .border_r_1()
+                .border_b_1()
+                .border_color(colors.border_variant)
+                .child(
+                    IconButton::new("close-all-tabs", IconName::CloseAll)
+                        .size(ButtonSize::Compact)
+                        .icon_size(IconSize::Small)
+                        .tooltip(Tooltip::text("Close all sessions"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.confirm_close_all(window, cx);
+                        })),
+                )
+        });
         Some(
             h_flex()
                 .id("session-tabs")
@@ -1588,6 +1608,7 @@ impl HubView {
                 .h(px(TAB_BAR_HEIGHT))
                 .bg(colors.panel_background)
                 .overflow_x_scroll()
+                .children(close_all)
                 .children(tabs)
                 // Fills the rest of the strip and carries its bottom border.
                 // Dropping a tab here moves it to the end.
@@ -2704,6 +2725,44 @@ impl HubView {
         if let Some(view) = self.active_chat.clone() {
             self.confirm_close(view, window, cx);
         }
+    }
+
+    /// Closes every open session, asking first while pi is working in any.
+    fn confirm_close_all(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let chats = self.open_chats();
+        let running = chats
+            .iter()
+            .filter(|chat| chat.read(cx).is_running())
+            .count();
+        if running == 0 {
+            for chat in &chats {
+                self.close_chat(chat, cx);
+            }
+            return;
+        }
+        let question = match running {
+            1 => "pi is working in a session. Close all anyway?".to_string(),
+            count => format!("pi is working in {count} sessions. Close all anyway?"),
+        };
+        let answer = window.prompt(
+            gpui::PromptLevel::Warning,
+            &question,
+            Some("Closing stops the runs. The sessions themselves are kept."),
+            &["Close All", "Cancel"],
+            cx,
+        );
+        cx.spawn(async move |this, cx| {
+            if answer.await.ok() != Some(0) {
+                return;
+            }
+            this.update(cx, |this, cx| {
+                for chat in &chats {
+                    this.close_chat(chat, cx);
+                }
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// Closes an open session, asking first while pi is working in it.

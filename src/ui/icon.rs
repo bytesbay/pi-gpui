@@ -48,6 +48,7 @@ icons! {
     ChevronDown => "chevron_down",
     ChevronRight => "chevron_right",
     Close => "close",
+    CloseAll => "close_all",
     Compact => "compact",
     Copy => "copy",
     Dash => "dash",
