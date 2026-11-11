@@ -44,6 +44,7 @@ actions!(
         DismissModelPicker,
         CopySelection,
         ToggleTree,
+        Compact,
         TreeUp,
         TreeDown,
         TreeFirst,
@@ -94,6 +95,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("cmd-c", CopySelection, Some(KEY_CONTEXT)),
         KeyBinding::new("escape", DismissModelPicker, Some(MODEL_PICKER_CONTEXT)),
         KeyBinding::new("cmd-shift-t", ToggleTree, Some(KEY_CONTEXT)),
+        KeyBinding::new("cmd-shift-c", Compact, Some(KEY_CONTEXT)),
         KeyBinding::new("up", TreeUp, Some(TREE_CONTEXT)),
         KeyBinding::new("k", TreeUp, Some(TREE_CONTEXT)),
         KeyBinding::new("down", TreeDown, Some(TREE_CONTEXT)),
@@ -1312,6 +1314,25 @@ impl ChatView {
         }
         self.sync_list(previous_len, Vec::new());
         true
+    }
+
+    /// ⌘⇧C and the composer button: `/compact` without instructions.
+    fn compact(&mut self, _: &Compact, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.can_compact() {
+            return;
+        }
+        let previous_len = self.rows.len();
+        self.start_compaction("");
+        self.sync_list(previous_len, Vec::new());
+        cx.notify();
+    }
+
+    fn can_compact(&self) -> bool {
+        matches!(self.connection, Connection::Ready(_))
+            && !self.compacting
+            && !self.is_running()
+            && !self.loading_history
+            && !self.rows.is_empty()
     }
 
     fn start_compaction(&mut self, instructions: &str) {
@@ -2947,7 +2968,22 @@ impl ChatView {
                                             .min_w(px(0.))
                                             .gap(px(2.))
                                             .child(self.render_model_chip(cx))
-                                            .children(self.render_usage_ring(cx)),
+                                            .children(self.render_usage_ring(cx))
+                                            .child(
+                                                IconButton::new("compact", IconName::Compact)
+                                                    .icon_size(IconSize::Small)
+                                                    .disabled(!self.can_compact())
+                                                    .loading(self.compacting)
+                                                    .tooltip(Tooltip::with_keys(
+                                                        "Compact context",
+                                                        "⌘⇧C",
+                                                    ))
+                                                    .on_click(cx.listener(
+                                                        |this, _, window, cx| {
+                                                            this.compact(&Compact, window, cx)
+                                                        },
+                                                    )),
+                                            ),
                                     )
                                     .child(actions),
                             ),
@@ -3056,6 +3092,7 @@ impl Render for ChatView {
                 }
             }))
             .on_action(cx.listener(Self::toggle_tree_action))
+            .on_action(cx.listener(Self::compact))
             .on_action(cx.listener(Self::tree_up))
             .on_action(cx.listener(Self::tree_down))
             .on_action(cx.listener(Self::tree_first))

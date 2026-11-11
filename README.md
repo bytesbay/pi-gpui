@@ -65,6 +65,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 | `⌘⇧R` | Reload all open sessions (fresh pi: picks up updated pi, extensions, skills and settings) |
 | `⌘B` / `⌘R` | Show or hide the left / right panel |
 | `⌘⇧T` | Session tree |
+| `⌘⇧C` | Compact the context (also the button next to the context ring) |
 | `⌘⇧M` | Model and thinking level |
 | `⌘⇧E` | Expand or collapse step details |
 | `↩` / `⇧↩` | Send / new line (sending while pi works steers it) |
