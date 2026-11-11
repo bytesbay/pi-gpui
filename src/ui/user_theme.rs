@@ -105,8 +105,9 @@ fn load_file(path: &Path) -> Result<Vec<UserTheme>, String> {
         .to_string_lossy()
         .to_string();
     let theme = |object: &Map<String, Value>, fallback_name: &str| UserTheme {
-        name: object["name"]
-            .as_str()
+        name: object
+            .get("name")
+            .and_then(Value::as_str)
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or(fallback_name)
@@ -344,6 +345,22 @@ mod tests {
         assert!(!zed.is_dark());
         assert_eq!(zed.colors.panel_background, Hsla::from(gpui::rgb(0xeeeeee)));
         assert_eq!(zed.colors.syntax.keyword, Hsla::from(gpui::rgb(0xff0000)));
+        std::fs::remove_dir_all(&directory).ok();
+    }
+
+    #[test]
+    fn a_theme_without_a_name_takes_the_file_name() {
+        let directory = std::env::temp_dir().join(format!("pi-gpui-noname-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        std::fs::write(
+            directory.join("dusk.json"),
+            r##"{ "background": "#101010" }"##,
+        )
+        .unwrap();
+        let (themes, errors) = load_dir(&directory);
+        assert_eq!(themes.len(), 1);
+        assert_eq!(themes[0].name.as_ref(), "dusk");
+        assert!(errors.is_empty());
         std::fs::remove_dir_all(&directory).ok();
     }
 
