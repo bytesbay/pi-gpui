@@ -190,6 +190,34 @@ impl Render for DraggedWorkspace {
     }
 }
 
+/// A session tab being dragged to reorder it; also its drag preview.
+#[derive(Clone)]
+struct DraggedTab {
+    id: gpui::EntityId,
+    title: SharedString,
+    index: usize,
+}
+
+impl Render for DraggedTab {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors.clone();
+        h_flex()
+            .h(px(26.))
+            .max_w(px(220.))
+            .px(px(10.))
+            .rounded(px(5.))
+            .bg(colors.elevated_surface_background)
+            .border_1()
+            .border_color(colors.border)
+            .shadow_md()
+            .child(
+                Label::new(self.title.clone())
+                    .size(LabelSize::Small)
+                    .truncate(),
+            )
+    }
+}
+
 struct WorkspaceEntry {
     path: PathBuf,
     name: SharedString,
@@ -263,6 +291,8 @@ pub struct HubView {
     resizing_dock: Option<DockSide>,
     /// The chat the panels last followed; they catch up in the next render.
     panels_follow: Option<gpui::EntityId>,
+    /// Tab order set by dragging; open sessions missing here go last.
+    tab_order: Vec<gpui::EntityId>,
 
     /// Available pi and extension updates (applied only on request).
     pi_updates: pi_updates::Updates,
@@ -401,6 +431,7 @@ impl HubView {
             panel_menu: None,
             resizing_dock: None,
             panels_follow: None,
+            tab_order: Vec::new(),
 
             pi_updates: pi_updates::Updates::default(),
             update_popover: None,
@@ -1378,8 +1409,13 @@ impl HubView {
                 .overflow_x_scroll()
                 .children(tabs)
                 // Fills the rest of the strip and carries its bottom border.
+                // Dropping a tab here moves it to the end.
                 .child(
                     div()
+                        .id("session-tabs-end")
+                        .on_drop(cx.listener(|this, dragged: &DraggedTab, _, cx| {
+                            this.move_tab(dragged.id, usize::MAX, cx);
+                        }))
                         .flex_1()
                         .min_w(px(0.))
                         .h_full()
@@ -1392,7 +1428,8 @@ impl HubView {
 
     /// Open sessions in tab order, with their project names.
     fn tab_chats(&self) -> Vec<(SharedString, Entity<ChatView>)> {
-        self.workspaces
+        let mut chats: Vec<_> = self
+            .workspaces
             .iter()
             .flat_map(|entry| {
                 entry
@@ -1400,7 +1437,35 @@ impl HubView {
                     .iter()
                     .map(|chat| (entry.name.clone(), chat.view.clone()))
             })
-            .collect()
+            .collect();
+        // Stable: sessions never dragged keep sidebar order at the end.
+        chats.sort_by_key(|(_, view)| {
+            self.tab_order
+                .iter()
+                .position(|id| *id == view.entity_id())
+                .unwrap_or(usize::MAX)
+        });
+        chats
+    }
+
+    /// Moves a tab to `target`'s place (`usize::MAX`: the end).
+    fn move_tab(&mut self, id: gpui::EntityId, target: usize, cx: &mut Context<Self>) {
+        let mut order: Vec<_> = self
+            .tab_chats()
+            .iter()
+            .map(|(_, view)| view.entity_id())
+            .collect();
+        let Some(from) = order.iter().position(|tab| *tab == id) else {
+            return;
+        };
+        let target = target.min(order.len() - 1);
+        if from == target {
+            return;
+        }
+        let tab = order.remove(from);
+        order.insert(target, tab);
+        self.tab_order = order;
+        cx.notify();
     }
 
     fn render_tab(
@@ -1428,6 +1493,13 @@ impl HubView {
         let id = view.entity_id();
         let group: SharedString = format!("session-tab:{id}").into();
         let tooltip = format!("{workspace_name} › {title}");
+        let index = number - 1;
+        let dragged = DraggedTab {
+            id,
+            title: title.clone().into(),
+            index,
+        };
+        let drop_target = colors.text_accent.opacity(0.12);
         // While ⌘ is held, the shortcut takes the close button's place.
         let end = if self.command_held && number <= 9 {
             KeyHint::new(format!("⌘{number}")).into_any_element()
@@ -1477,6 +1549,17 @@ impl HubView {
                 }
             })
             .tooltip(Tooltip::text(tooltip))
+            .on_drag(dragged, |dragged, _, _, cx| cx.new(|_| dragged.clone()))
+            .drag_over::<DraggedTab>(move |style, dragged, _, _| {
+                if dragged.index == index {
+                    style
+                } else {
+                    style.bg(drop_target)
+                }
+            })
+            .on_drop(cx.listener(move |this, dragged: &DraggedTab, _, cx| {
+                this.move_tab(dragged.id, index, cx);
+            }))
             .on_click(cx.listener({
                 let view = view.clone();
                 move |this, _, _, cx| this.activate(view.clone(), cx)
