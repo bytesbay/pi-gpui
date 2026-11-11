@@ -92,3 +92,32 @@ jobs:
       - name: Remove the signing keychain
         if: always()
         run: security delete-keychain "$RUNNER_TEMP/signing.keychain-db" || true
+
+  # The Linux builds join the release the macOS job created. If one of them
+  # fails, the macOS release is already out and the job can be run again.
+  linux:
+    needs: macos
+    strategy:
+      fail-fast: false
+      matrix:
+        # 22.04 keeps the glibc requirement low (2.35).
+        runner: [ubuntu-22.04, ubuntu-22.04-arm]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: script/linux-deps.sh
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build the tarball
+        run: script/bundle-linux.sh
+
+      - name: Add it to the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" target/release/pi-gpui-*-linux-*.tar.gz --clobber
