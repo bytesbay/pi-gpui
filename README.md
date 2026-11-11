@@ -1,6 +1,6 @@
 # Pi GPUI
 
-A native desktop app for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, with the same models, extensions, skills and sessions you use in the terminal. macOS for now; Linux is next.
+A native GUI for the [pi](https://github.com/earendil-works/pi) coding agent, written in Rust with [GPUI](https://www.gpui.rs), the UI framework behind Zed. No Electron, no webview. It runs the pi you already have over RPC, with the same models, extensions, skills and sessions you use in the terminal. macOS for now; Linux is next.
 
 The app is 16 MB, its window is up in about 0.4 s, and it uses about 75 MB of memory at idle. Electron clients for pi take 0.5 to 1.1 s and 190 to 430 MB. Measured on an M1 Pro with no projects open, counting each app's own processes ([method and script](docs/BENCHMARKS.md)).
 
@@ -61,7 +61,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 | `⌘N` | New session |
 | `⌘,` | Settings |
 | `⌘O` | Add project |
-| `⌘1` … `⌘9` | Open the n-th session (hold `⌘` to see numbers) |
+| `⌘1` … `⌘9` | Switch to the n-th open session tab (hold `⌘` to see numbers) |
 | `⌘⇧R` | Reload all open sessions (fresh pi: picks up updated pi, extensions, skills and settings) |
 | `⌘B` / `⌘R` | Show or hide the left / right panel |
 | `⌘⇧T` | Session tree |

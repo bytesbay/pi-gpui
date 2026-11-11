@@ -2,7 +2,7 @@
 
 [English](../README.md) | 中文
 
-[pi](https://github.com/earendil-works/pi) 编程智能体的原生桌面客户端，用 Rust 和 [GPUI](https://www.gpui.rs)（Zed 编辑器使用的 UI 框架）编写。目前支持 macOS，接下来是 Linux。没有 Electron，也没有 webview。它通过 RPC 运行你已经安装的 pi，所以你的模型、扩展、技能和会话都和在终端里一样可用。
+[pi](https://github.com/earendil-works/pi) 编程智能体的原生 GUI 桌面客户端，用 Rust 和 [GPUI](https://www.gpui.rs)（Zed 编辑器使用的 UI 框架）编写。目前支持 macOS，接下来是 Linux。没有 Electron，也没有 webview。它通过 RPC 运行你已经安装的 pi，所以你的模型、扩展、技能和会话都和在终端里一样可用。
 
 应用大小 16 MB，窗口约 0.4 秒出现，空闲时占用约 75 MB 内存。基于 Electron 的 pi 客户端需要 0.5 到 1.1 秒和 190 到 430 MB（[测试方法](BENCHMARKS.md)）。
 
@@ -62,7 +62,7 @@ pi install npm:pi-gpui
 | `⌘N` | 新会话 |
 | `⌘,` | 设置 |
 | `⌘O` | 添加项目 |
-| `⌘1` … `⌘9` | 打开第 n 个会话（按住 `⌘` 显示编号） |
+| `⌘1` … `⌘9` | 切换到第 n 个打开的会话标签（按住 `⌘` 显示编号） |
 | `⌘⇧R` | 重新加载所有打开的会话 |
 | `⌘B` / `⌘R` | 显示或隐藏左侧 / 右侧面板 |
 | `⌘⇧T` | 会话树 |

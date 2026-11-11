@@ -53,7 +53,7 @@ actions!(
     ]
 );
 
-/// ⌘1…⌘9: the n-th session in the sidebar (1-based).
+/// ⌘1…⌘9: the n-th open session tab (1-based).
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
 #[action(namespace = hub, no_json)]
 pub struct SelectSession {
@@ -63,8 +63,8 @@ pub struct SelectSession {
 const KEY_CONTEXT: &str = "Hub";
 const RENAME_CONTEXT: &str = "SessionRename";
 const SETTINGS_FIELD_CONTEXT: &str = "SettingsField";
-/// Space around the floating right panel.
-const FLOATING_DOCK_MARGIN: f32 = 8.;
+/// Height of the strip of open session tabs above the chat.
+const TAB_BAR_HEIGHT: f32 = 34.;
 const SESSIONS_PER_WORKSPACE: usize = 20;
 /// Our own title bar replaces the native one (see `main.rs`). The traffic
 /// lights are placed at (12, 11) so they sit centered in this height.
@@ -250,7 +250,7 @@ pub struct HubView {
     renaming: Option<Renaming>,
     /// Sessions being renamed through a short-lived pi process.
     renaming_sessions: HashSet<PathBuf>,
-    /// ⌘ is held: the sidebar shows ⌘1…⌘9 next to sessions.
+    /// ⌘ is held: the tabs show ⌘1…⌘9.
     command_held: bool,
     /// The Settings page replaces the main area while open.
     settings_page: Option<SettingsPage>,
@@ -1272,9 +1272,8 @@ impl HubView {
     /// Projects and their sessions, in whichever dock holds them.
     fn render_sessions_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut workspaces = Vec::with_capacity(self.workspaces.len());
-        let mut numbered = 0;
         for (index, entry) in self.workspaces.iter().enumerate() {
-            workspaces.push(self.render_workspace(index, entry, &mut numbered, cx));
+            workspaces.push(self.render_workspace(index, entry, cx));
         }
         v_flex()
             .size_full()
@@ -1296,8 +1295,7 @@ impl HubView {
             .into_any_element()
     }
 
-    /// The left dock is a plain sidebar; the right one floats over the main
-    /// area as a card, like the inspector sidebars of macOS.
+    /// Both docks are plain sidebars, flush with the window edges.
     fn render_dock(&self, side: DockSide, cx: &mut Context<Self>) -> Option<AnyElement> {
         let dock = self.docks.dock(side);
         if !dock.is_shown() {
@@ -1329,7 +1327,7 @@ impl HubView {
             .w(px(5.))
             .map(|this| match side {
                 DockSide::Left => this.right_0(),
-                DockSide::Right => this.left(px(FLOATING_DOCK_MARGIN / 2. - 2.)),
+                DockSide::Right => this.left_0(),
             })
             .cursor_col_resize()
             .on_mouse_down(
@@ -1339,38 +1337,172 @@ impl HubView {
                     cx.stop_propagation();
                 }),
             );
-        Some(match side {
-            DockSide::Left => div()
+        Some(
+            div()
                 .relative()
                 .flex_none()
                 .w(px(dock.width))
                 .h_full()
                 .bg(colors.panel_background)
-                .border_r_1()
                 .border_color(colors.border_variant)
+                .map(|this| match side {
+                    DockSide::Left => this.border_r_1(),
+                    DockSide::Right => this.border_l_1(),
+                })
                 .child(body)
                 .child(handle)
                 .into_any_element(),
-            DockSide::Right => div()
-                .relative()
+        )
+    }
+
+    /// Tabs for the open sessions only, in sidebar order. Hidden while no
+    /// session is open.
+    fn render_tab_bar(&self, cx: &mut Context<Self>) -> Option<AnyElement> {
+        let colors = cx.theme().colors.clone();
+        let tabs: Vec<AnyElement> = self
+            .tab_chats()
+            .into_iter()
+            .enumerate()
+            .map(|(index, (name, view))| self.render_tab(index + 1, &name, view, cx))
+            .collect();
+        if tabs.is_empty() {
+            return None;
+        }
+        Some(
+            h_flex()
+                .id("session-tabs")
                 .flex_none()
-                .h_full()
-                .p(px(FLOATING_DOCK_MARGIN))
+                .w_full()
+                .h(px(TAB_BAR_HEIGHT))
+                .bg(colors.panel_background)
+                .overflow_x_scroll()
+                .children(tabs)
+                // Fills the rest of the strip and carries its bottom border.
                 .child(
                     div()
-                        .w(px(dock.width))
+                        .flex_1()
+                        .min_w(px(0.))
                         .h_full()
-                        .rounded(px(10.))
-                        .border_1()
-                        .border_color(colors.border)
-                        .bg(colors.panel_background)
-                        .shadow_lg()
-                        .overflow_hidden()
-                        .child(body),
+                        .border_b_1()
+                        .border_color(colors.border_variant),
                 )
-                .child(handle)
                 .into_any_element(),
-        })
+        )
+    }
+
+    /// Open sessions in tab order, with their project names.
+    fn tab_chats(&self) -> Vec<(SharedString, Entity<ChatView>)> {
+        self.workspaces
+            .iter()
+            .flat_map(|entry| {
+                entry
+                    .chats
+                    .iter()
+                    .map(|chat| (entry.name.clone(), chat.view.clone()))
+            })
+            .collect()
+    }
+
+    fn render_tab(
+        &self,
+        number: usize,
+        workspace_name: &SharedString,
+        view: Entity<ChatView>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let is_active = self.settings_page.is_none() && self.active_chat.as_ref() == Some(&view);
+        let chat = view.read(cx);
+        let title = chat.title();
+        let marker = match chat.status() {
+            ChatStatus::Busy => Spinner::new()
+                .size(IconSize::XSmall)
+                .color(Color::Accent)
+                .into_any_element(),
+            ChatStatus::Stopped => Indicator::dot(Color::Error).into_any_element(),
+            ChatStatus::Ready => Icon::new(IconName::Message)
+                .size(IconSize::XSmall)
+                .color(Color::Muted)
+                .into_any_element(),
+        };
+        let id = view.entity_id();
+        let group: SharedString = format!("session-tab:{id}").into();
+        let tooltip = format!("{workspace_name} › {title}");
+        // While ⌘ is held, the shortcut takes the close button's place.
+        let end = if self.command_held && number <= 9 {
+            KeyHint::new(format!("⌘{number}")).into_any_element()
+        } else {
+            div()
+                .flex_none()
+                .when(!is_active, |this| {
+                    this.opacity(0.)
+                        .group_hover(group.clone(), |style| style.opacity(1.))
+                })
+                .child(
+                    IconButton::new(ElementId::from(("session-tab-close", id)), IconName::Close)
+                        .size(ButtonSize::Compact)
+                        .icon_size(IconSize::XSmall)
+                        .tooltip(Tooltip::with_optional_keys(
+                            "Close session",
+                            is_active.then(|| "⌘W".into()),
+                        ))
+                        .on_click(cx.listener({
+                            let view = view.clone();
+                            move |this, _, window, cx| {
+                                cx.stop_propagation();
+                                this.confirm_close(view.clone(), window, cx);
+                            }
+                        })),
+                )
+                .into_any_element()
+        };
+        h_flex()
+            .id(ElementId::from(("session-tab", id)))
+            .group(group.clone())
+            .flex_none()
+            .max_w(px(220.))
+            .h_full()
+            .pl(px(10.))
+            .pr(px(4.))
+            .gap(px(6.))
+            .border_r_1()
+            .border_color(colors.border_variant)
+            .cursor_pointer()
+            .map(|this| {
+                if is_active {
+                    this.bg(colors.editor_background)
+                } else {
+                    this.border_b_1()
+                        .hover(|style| style.bg(colors.ghost_element_hover))
+                }
+            })
+            .tooltip(Tooltip::text(tooltip))
+            .on_click(cx.listener({
+                let view = view.clone();
+                move |this, _, _, cx| this.activate(view.clone(), cx)
+            }))
+            .on_mouse_down(
+                MouseButton::Middle,
+                cx.listener({
+                    let view = view.clone();
+                    move |this, _, window, cx| this.confirm_close(view.clone(), window, cx)
+                }),
+            )
+            .child(div().flex_none().child(marker))
+            .child(
+                div().min_w(px(0.)).child(
+                    Label::new(title)
+                        .size(LabelSize::Small)
+                        .color(if is_active {
+                            Color::Default
+                        } else {
+                            Color::Muted
+                        })
+                        .truncate(),
+                ),
+            )
+            .child(end)
+            .into_any_element()
     }
 
     /// A dock with one panel shows its title; with several, a tab per panel.
@@ -1624,7 +1756,6 @@ impl HubView {
         &self,
         index: usize,
         entry: &WorkspaceEntry,
-        numbered: &mut usize,
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let path = entry.path.clone();
@@ -1708,11 +1839,7 @@ impl HubView {
                 if row.hidden && !show_hidden {
                     continue;
                 }
-                let number = (!row.hidden).then(|| {
-                    *numbered += 1;
-                    *numbered
-                });
-                rows.push(self.render_session_row(row, number.filter(|n| *n <= 9), cx));
+                rows.push(self.render_session_row(row, cx));
             }
             if hidden_count > 0 {
                 let label = if show_hidden {
@@ -1853,38 +1980,18 @@ impl HubView {
         rows
     }
 
-    /// The sessions ⌘1…⌘9 select, in sidebar order.
-    fn numbered_sessions(&self, cx: &App) -> Vec<SessionRow> {
-        self.workspaces
-            .iter()
-            .filter(|entry| entry.expanded)
-            .flat_map(|entry| self.session_rows(entry, cx))
-            .filter(|row| !row.hidden)
-            .take(9)
-            .collect()
-    }
-
+    /// ⌘1…⌘9: switches to the n-th open session tab.
     fn select_session(&mut self, action: &SelectSession, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(row) = self
-            .numbered_sessions(cx)
+        if let Some((_, view)) = self
+            .tab_chats()
             .into_iter()
             .nth(action.index.saturating_sub(1))
-        else {
-            return;
-        };
-        match (row.open_chat, row.file) {
-            (Some(view), _) => self.activate(view, cx),
-            (None, Some(file)) => self.open_session(&row.workspace, file, cx),
-            (None, None) => {}
+        {
+            self.activate(view, cx);
         }
     }
 
-    fn render_session_row(
-        &self,
-        row: SessionRow,
-        number: Option<usize>,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_session_row(&self, row: SessionRow, cx: &mut Context<Self>) -> AnyElement {
         let is_active = row
             .open_chat
             .as_ref()
@@ -2019,21 +2126,15 @@ impl HubView {
             .start_slot(div().w(px(12.)).flex().justify_center().child(marker))
             .child(title)
             .on_click(on_click);
-        match number {
-            Some(number) if self.command_held => item
-                .end_slot(KeyHint::new(format!("⌘{number}")))
-                .into_any_element(),
-            _ => item
-                .when_some(row.age.clone(), |item, age| {
-                    item.end_slot(
-                        Label::new(age)
-                            .size(LabelSize::XSmall)
-                            .color(Color::Placeholder),
-                    )
-                })
-                .end_hover_slot(hover_buttons)
-                .into_any_element(),
-        }
+        item.when_some(row.age.clone(), |item, age| {
+            item.end_slot(
+                Label::new(age)
+                    .size(LabelSize::XSmall)
+                    .color(Color::Placeholder),
+            )
+        })
+        .end_hover_slot(hover_buttons)
+        .into_any_element()
     }
 
     fn render_session_menu(&self, menu: &SessionMenu, cx: &mut Context<Self>) -> AnyElement {
@@ -3757,9 +3858,7 @@ impl Render for HubView {
                 let x = f32::from(event.position.x);
                 let width = match side {
                     DockSide::Left => x,
-                    DockSide::Right => {
-                        f32::from(window.viewport_size().width) - x - FLOATING_DOCK_MARGIN
-                    }
+                    DockSide::Right => f32::from(window.viewport_size().width) - x,
                 };
                 this.docks.dock_mut(side).width = width.clamp(side.min_width(), side.max_width());
                 cx.notify();
@@ -3803,6 +3902,7 @@ impl Render for HubView {
                             .flex_1()
                             .min_w(px(0.))
                             .h_full()
+                            .children(self.render_tab_bar(cx))
                             .children(notice)
                             .child(main),
                     )
