@@ -231,7 +231,7 @@ if (rotor && !reduceMotion && "animate" in rotor) {
     for (;;) {
       await new Promise((resolve) => {
         poke = resolve;
-        setTimeout(resolve, word === 0 ? 4200 : 2400);
+        setTimeout(resolve, word === 0 ? 2200 : 1300);
       });
       if (!document.hidden) await slice();
     }
