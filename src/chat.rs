@@ -281,8 +281,12 @@ enum Row {
         steering: bool,
         /// Pasted images (their paths are in the text) and inline images.
         images: Vec<Picture>,
+        /// When it was sent, Unix ms.
+        at: Option<i64>,
     },
     Assistant {
+        /// When pi started answering, Unix ms.
+        at: Option<i64>,
         text: String,
         /// Thinking content blocks, in order.
         thinking: Vec<String>,
@@ -749,6 +753,7 @@ impl ChatView {
         match self.send(command) {
             Ok(_) => {
                 self.rows.push(Row::User {
+                    at: Some(now_ms()),
                     text: SharedString::from(message.to_string()),
                     steering,
                     images: attachments::image_paths_in(message)
@@ -864,6 +869,7 @@ impl ChatView {
             "message_start" if record["message"]["role"] == "assistant" => {
                 self.finish_streaming(changed);
                 self.rows.push(Row::Assistant {
+                    at: record["message"]["timestamp"].as_i64().or(Some(now_ms())),
                     text: String::new(),
                     thinking: Vec::new(),
                     streaming: true,
@@ -2180,6 +2186,7 @@ impl ChatView {
                 text,
                 steering,
                 images,
+                ..
             } => v_flex()
                 .gap(px(4.))
                 .when(*steering, |this| {
@@ -2222,6 +2229,7 @@ impl ChatView {
                 streaming,
                 error,
                 thought_overrides,
+                ..
             } => {
                 let thoughts = split_thoughts(thinking);
                 if text.is_empty() && thoughts.is_empty() && error.is_none() {
@@ -2507,6 +2515,10 @@ impl ChatView {
             row,
             Row::Notice { .. } | Row::Summary { .. } | Row::Dialog(_)
         ) && self.can_fork();
+        let sent_at = match row {
+            Row::User { at, .. } | Row::Assistant { at, .. } => *at,
+            _ => None,
+        };
         let fork_tooltip = if matches!(row, Row::User { .. }) {
             "Fork from this message"
         } else {
@@ -2526,6 +2538,30 @@ impl ChatView {
                     .w_full()
                     .max_w(px(CONTENT_MAX_WIDTH))
                     .child(content)
+                    .when_some(sent_at, |this, at| {
+                        // A small pill on the row's top edge, like a chat app's
+                        // hover toolbar; the full date is in its tooltip.
+                        this.child(
+                            div()
+                                .id(("time", index))
+                                .absolute()
+                                .top(px(-9.))
+                                .right(px(8.))
+                                .px(px(6.))
+                                .rounded(px(5.))
+                                .border_1()
+                                .border_color(colors.border_variant)
+                                .bg(colors.editor_background)
+                                .opacity(0.)
+                                .group_hover(ROW_GROUP, |style| style.opacity(1.))
+                                .tooltip(Tooltip::text(format_time(at, true)))
+                                .child(
+                                    Label::new(format_time(at, false))
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                ),
+                        )
+                    })
                     .when(forkable, |this| {
                         // In the row's left gutter, which is part of the row's
                         // hover area, so the button stays while the pointer moves to it.
@@ -3180,6 +3216,46 @@ async fn pump_events(
     }
 }
 
+fn now_ms() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|age| age.as_millis() as i64)
+        .unwrap_or_default()
+}
+
+/// Local time of a Unix ms timestamp: "14:05" today, "12 Nov 14:05" on other
+/// days (with the year when it is not this one); `full` always gives the
+/// date with seconds.
+fn format_time(at: i64, full: bool) -> String {
+    const MONTHS: [&str; 12] = [
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    ];
+    let local = |ms: i64| {
+        let seconds = (ms / 1000) as libc::time_t;
+        // SAFETY: localtime_r only writes into the struct we pass.
+        unsafe {
+            let mut tm: libc::tm = std::mem::zeroed();
+            libc::localtime_r(&seconds, &mut tm);
+            tm
+        }
+    };
+    let tm = local(at);
+    let today = local(now_ms());
+    let time = format!("{:02}:{:02}", tm.tm_hour, tm.tm_min);
+    let month = MONTHS[tm.tm_mon.clamp(0, 11) as usize];
+    let year = 1900 + tm.tm_year;
+    if full {
+        return format!("{} {month} {year}, {time}:{:02}", tm.tm_mday, tm.tm_sec);
+    }
+    if (tm.tm_year, tm.tm_yday) == (today.tm_year, today.tm_yday) {
+        time
+    } else if tm.tm_year == today.tm_year {
+        format!("{} {month} {time}", tm.tm_mday)
+    } else {
+        format!("{} {month} {year} {time}", tm.tm_mday)
+    }
+}
+
 /// Rebuilds rows from `get_messages`. Tool calls come from the assistant's
 /// `toolCall` blocks and are completed by the matching `toolResult` message,
 /// the same shape the live stream produces from `tool_execution_*` events.
@@ -3191,6 +3267,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
             "user" => {
                 let text = sessions::message_text(message);
                 rows.push(Row::User {
+                    at: message["timestamp"].as_i64(),
                     images: Picture::of_message(&message["content"], &text),
                     text: SharedString::from(text),
                     steering: false,
@@ -3201,6 +3278,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                 let error = stop_error(message);
                 if !text.is_empty() || !thinking.is_empty() || error.is_some() {
                     rows.push(Row::Assistant {
+                        at: message["timestamp"].as_i64(),
                         text,
                         thinking,
                         streaming: false,

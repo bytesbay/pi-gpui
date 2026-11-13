@@ -122,6 +122,7 @@ impl ChatView {
         match self.send(command) {
             Ok(id) => {
                 self.rows.push(Row::User {
+                    at: Some(now_ms()),
                     text: SharedString::from(message.to_string()),
                     steering: queued,
                     images: attachments::image_paths_in(message)

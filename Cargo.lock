@@ -3579,6 +3579,7 @@ dependencies = [
  "futures",
  "gpui",
  "image",
+ "libc",
  "objc",
  "pulldown-cmark",
  "raw-window-handle",
