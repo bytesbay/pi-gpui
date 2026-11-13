@@ -56,6 +56,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 - `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
 - `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
+- `contributes.settings`: settings shown on the Settings page under the plugin's name (see Settings).
 - `activation`: `lazy` (default) starts the plugin on first use; `startup` starts it with the app, for plugins that serve something (a local server, a bridge).
 - `permissions`: `"sessions"` lets the plugin list, open and drive pi sessions and follow their events (see Sessions); `"app"` lets it check for updates and restart the app (see App). Without them `sessions.*` and `app.*` requests fail.
 
@@ -73,6 +74,27 @@ A prompt closes when it is answered, when the plugin sends `prompt.close`, when 
 
 The [Secrets plugin](../examples/plugins/secrets) is a complete example: a pi tool `request_secret` that waits while the plugin asks for the value in a masked field, stores it in a file and tells the tool only the outcome.
 
+### Settings
+
+A plugin declares its settings in the manifest; the Settings page shows them in a group named after the plugin, and settings.json stores them as top-level `"<plugin id>.<key>"` values (`"remote-mcp.port": 7319`), so they can be edited by hand like any other setting.
+
+```json
+"contributes": {
+  "settings": [
+    { "key": "port", "title": "Port", "description": "Where the server listens.", "type": "number", "default": 7319, "min": 1, "max": 65535 },
+    { "key": "token", "title": "Token", "type": "string", "secret": true, "placeholder": "Paste a token" },
+    { "key": "online", "title": "Reachable from the internet", "type": "boolean", "default": false },
+    { "key": "mode", "title": "Mode", "type": "select", "options": ["fast", { "value": "safe", "label": "Safe" }], "default": "safe" }
+  ]
+}
+```
+
+- `type`: `string` (a text field; `secret` hides the text), `number` (`min`, `max`), `boolean` (a switch) or `select` (one of `options`: values, or `{value, label}`).
+- `default` must fit the type; without it: `""`, `false`, `min` or 0, the first option.
+- A stored value that does not fit (wrong type, out of range) counts as the default.
+
+The plugin gets its values as `settings` in `initialize` and again as `settings.changed` whenever one of them changes (from the page, the file or `settings.set`). Values are `{key: value}` with the plugin's own keys, defaults included.
+
 ## Protocol 1
 
 Every message is a JSON object on a single line; lines end with `\n`. A message looks like `{"method": "...", "params": {...}}`. Most messages are notifications without a reply.
@@ -83,7 +105,8 @@ A plugin message with an `id` is a request: the app always answers it with `{"id
 
 | Method | Params | When |
 |---|---|---|
-| `initialize` | `protocol`, `app`, `plugin.id`, `plugin.dir` | right after start |
+| `initialize` | `protocol`, `app`, `plugin.id`, `plugin.dir`, `settings` | right after start |
+| `settings.changed` | `settings` | a value of the plugin's settings changed |
 | `command.run` | `command`, `workspace?`, `session?` | the user pressed a button or keybinding |
 | `view.open` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi called a tool this plugin draws; stream to `callId` from now on |
 | `view.focus` | `callId`, `focused` | the view got or lost the keyboard |
@@ -107,6 +130,15 @@ A plugin message with an `id` is a request: the app always answers it with `{"id
 | `log` | `message` | a line in the app log (stderr) |
 
 The app ignores unknown methods, so the protocol can grow without breaking older plugins.
+
+### Settings requests
+
+Any plugin, for its own settings:
+
+| Method | Params | Result |
+|---|---|---|
+| `settings.get` | | `settings`: the current values |
+| `settings.set` | `key`, `value` | `{}`; writes `"<plugin id>.<key>"` to settings.json. Fails for undeclared keys and values that do not fit |
 
 ### Sessions
 

@@ -54,6 +54,9 @@ pub struct Settings {
     pub agent_font_size: f32,
     pub buffer_font_family: SharedString,
     pub buffer_font_size: f32,
+    /// Plugin settings: top-level `"<plugin id>.<key>"` values, checked
+    /// against each plugin's declarations where they are used.
+    pub plugin_values: serde_json::Map<String, Value>,
 }
 
 impl Default for Settings {
@@ -64,6 +67,7 @@ impl Default for Settings {
             agent_font_size: 14.,
             buffer_font_family: DEFAULT_BUFFER_FONT.into(),
             buffer_font_size: 12.,
+            plugin_values: serde_json::Map::new(),
         }
     }
 }
@@ -103,6 +107,13 @@ impl Settings {
             agent_font_size: size("agent_font_size", defaults.agent_font_size),
             buffer_font_family: text("buffer_font_family", defaults.buffer_font_family),
             buffer_font_size: size("buffer_font_size", defaults.buffer_font_size),
+            plugin_values: value
+                .as_object()
+                .into_iter()
+                .flatten()
+                .filter(|(key, _)| key.contains('.'))
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .collect(),
         }
     }
 

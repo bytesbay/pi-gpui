@@ -18,6 +18,10 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
+mod settings;
+
+pub use settings::{PluginSetting, SettingKind};
+
 use crate::jsonl::{JsonlMessage, JsonlProcess};
 use crate::pi;
 use crate::sessions;
@@ -189,6 +193,10 @@ pub struct PluginRegistry {
     /// `sessions.subscribe`: plugin id and the session handle it follows
     /// (`None` for all sessions).
     session_subscriptions: Vec<(SharedString, Option<String>)>,
+    /// Settings plugins declare (`contributes.settings`), in manifest order.
+    settings: Vec<PluginSetting>,
+    /// The settings each running plugin last got, to send only changes.
+    sent_settings: HashMap<SharedString, Value>,
     frames: Entity<ViewFrames>,
     _load_task: Task<()>,
 }
@@ -201,6 +209,11 @@ impl PluginRegistry {
     /// permission prompt must never block the first frame.
     pub fn new(key_context: &'static str, cx: &mut Context<Self>) -> Self {
         let discovery = cx.background_spawn(async { discover_plugins() });
+        // settings.json changed: running plugins get their new values.
+        cx.observe_global::<crate::settings::Settings>(|this: &mut Self, cx| {
+            this.send_settings(cx)
+        })
+        .detach();
         let load_task = cx.spawn(async move |this, cx| {
             let found = discovery.await;
             this.update(cx, |this, cx| this.register(found, key_context, cx))
@@ -216,6 +229,8 @@ impl PluginRegistry {
             prompts: Vec::new(),
             pi_extensions: Vec::new(),
             session_subscriptions: Vec::new(),
+            settings: Vec::new(),
+            sent_settings: HashMap::new(),
             frames: cx.new(|_| ViewFrames::default()),
             _load_task: load_task,
         }
@@ -265,6 +280,7 @@ impl PluginRegistry {
                     .map(|tool| (parsed.id.clone(), tool)),
             );
             self.pi_extensions.extend(parsed.pi_extensions);
+            self.settings.extend(parsed.settings);
             self.plugins.push(Plugin {
                 id: parsed.id,
                 name: parsed.name,
@@ -328,6 +344,91 @@ impl PluginRegistry {
 
     pub fn tool_view(&self, tool: &str) -> Option<&ToolView> {
         self.tool_views.iter().find(|view| view.tool == tool)
+    }
+
+    /// Plugins with settings, in load order, with their settings.
+    pub fn settings_sections(&self) -> Vec<(SharedString, Vec<PluginSetting>)> {
+        self.plugins
+            .iter()
+            .filter_map(|plugin| {
+                let settings: Vec<PluginSetting> = self
+                    .settings
+                    .iter()
+                    .filter(|setting| setting.plugin_id == plugin.id)
+                    .cloned()
+                    .collect();
+                (!settings.is_empty()).then(|| (plugin.name.clone(), settings))
+            })
+            .collect()
+    }
+
+    pub fn setting(&self, full_key: &str) -> Option<&PluginSetting> {
+        self.settings
+            .iter()
+            .find(|setting| setting.full_key() == full_key)
+    }
+
+    fn settings_values(&self, plugin_id: &str, cx: &gpui::App) -> Value {
+        settings::values(
+            &self.settings,
+            plugin_id,
+            crate::settings::Settings::get(cx),
+        )
+    }
+
+    /// `settings.changed` to running plugins whose values changed.
+    fn send_settings(&mut self, cx: &mut Context<Self>) {
+        let running: Vec<SharedString> = self
+            .plugins
+            .iter()
+            .filter(|plugin| matches!(plugin.state, PluginState::Running(_)))
+            .map(|plugin| plugin.id.clone())
+            .collect();
+        for plugin_id in running {
+            let values = self.settings_values(&plugin_id, cx);
+            if values.as_object().is_none_or(|values| values.is_empty())
+                || self.sent_settings.get(&plugin_id) == Some(&values)
+            {
+                continue;
+            }
+            self.sent_settings.insert(plugin_id.clone(), values.clone());
+            let message = json!({ "method": "settings.changed", "params": { "settings": values } });
+            self.send(&plugin_id, message, cx);
+        }
+    }
+
+    /// `settings.get` and `settings.set`: a plugin's own settings only.
+    fn apply_settings_request(
+        &mut self,
+        reply: PluginReply,
+        method: &str,
+        params: &Value,
+        cx: &mut Context<Self>,
+    ) {
+        let plugin_id = reply.plugin_id.clone();
+        let result = match method {
+            "settings.get" => Ok(json!({ "settings": self.settings_values(&plugin_id, cx) })),
+            "settings.set" => {
+                let key = params["key"].as_str().unwrap_or_default();
+                match self
+                    .settings
+                    .iter()
+                    .find(|setting| setting.plugin_id == plugin_id && setting.key == key)
+                {
+                    None => Err(format!("no setting \"{key}\" in this plugin's manifest")),
+                    Some(setting) => match setting.validate(&params["value"]) {
+                        None => Err(format!("value does not fit the setting \"{key}\"")),
+                        Some(value) => {
+                            let full_key = setting.full_key();
+                            crate::settings::set(cx, &full_key, value);
+                            Ok(json!({}))
+                        }
+                    },
+                }
+            }
+            _ => Err(format!("unknown method {method}")),
+        };
+        self.respond(reply, result);
     }
 
     pub fn pi_extensions(&self) -> &[PathBuf] {
@@ -592,6 +693,10 @@ impl PluginRegistry {
             plugin_id: plugin_id.clone(),
             id,
         };
+        if method.starts_with("settings.") {
+            self.apply_settings_request(reply, method, params, cx);
+            return;
+        }
         let Some((sessions, app)) = self
             .plugins
             .iter()
@@ -750,6 +855,9 @@ impl PluginRegistry {
         resolved: Result<(PathBuf, Vec<String>), String>,
         cx: &mut Context<Self>,
     ) {
+        let settings = self.settings_values(&plugin_id, cx);
+        self.sent_settings
+            .insert(plugin_id.clone(), settings.clone());
         let Some(plugin) = self.plugin_mut(&plugin_id) else {
             return;
         };
@@ -771,6 +879,7 @@ impl PluginRegistry {
                         "protocol": PROTOCOL_VERSION,
                         "app": env!("CARGO_PKG_VERSION"),
                         "plugin": { "id": plugin.id, "dir": plugin.dir },
+                        "settings": settings,
                     },
                 });
                 let mut failure = None;
@@ -1056,6 +1165,7 @@ struct ParsedManifest {
     startup: bool,
     sessions: bool,
     app: bool,
+    settings: Vec<PluginSetting>,
 }
 
 fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
@@ -1178,8 +1288,10 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
     };
     let sessions = permitted("sessions");
     let app = permitted("app");
+    let settings = settings::parse(&manifest, &id)?;
 
     Ok(ParsedManifest {
+        settings,
         name: SharedString::from(manifest["name"].as_str().unwrap_or(&id).to_string()),
         startup,
         sessions,

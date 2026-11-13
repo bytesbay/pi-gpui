@@ -24,7 +24,8 @@ use crate::pi::{self, Installation};
 use crate::pi_updates;
 use crate::platform;
 use crate::plugins::{
-    CommandContext, PluginEvent, PluginRegistry, PluginReply, PluginRequest, RunPluginCommand,
+    CommandContext, PluginEvent, PluginRegistry, PluginReply, PluginRequest, PluginSetting,
+    RunPluginCommand, SettingKind,
 };
 use crate::sessions::{self, SessionSummary};
 use crate::settings::{self, Settings};
@@ -179,6 +180,8 @@ enum UpdatePopover {
 struct SettingsPage {
     ui_font: Entity<TextInput>,
     code_font: Entity<TextInput>,
+    /// Text and number fields of plugin settings, by settings.json key.
+    plugin_fields: std::collections::HashMap<String, Entity<TextInput>>,
 }
 
 struct OpenChat {
@@ -361,6 +364,17 @@ impl HubView {
         cx.observe_global::<Settings>(|this: &mut Self, cx| {
             if let Some(page) = &this.settings_page {
                 let settings = Settings::get(cx).clone();
+                for (key, input) in &page.plugin_fields {
+                    let Some(setting) = this.plugins.read(cx).setting(key).cloned() else {
+                        continue;
+                    };
+                    let value = setting.text(&setting.value(&settings));
+                    input.update(cx, |input, cx| {
+                        if input.text() != value {
+                            input.set_text(value, cx);
+                        }
+                    });
+                }
                 for (input, value) in [
                     (page.ui_font.clone(), settings.ui_font_family),
                     (page.code_font.clone(), settings.buffer_font_family),
@@ -391,7 +405,11 @@ impl HubView {
         let plugin_subscriptions = vec![
             cx.subscribe(&plugins, Self::on_plugin_event),
             // Plugin statuses live in the title bar.
-            cx.observe(&plugins, |_, _, cx| cx.notify()),
+            cx.observe(&plugins, |this, _, cx| {
+                // Plugins load after the window opens; their fields may be new.
+                this.ensure_plugin_fields(cx);
+                cx.notify();
+            }),
             // The update chip lives in the title bar; manual checks report here.
             cx.observe(&AutoUpdater::global(cx), |this, updater, cx| {
                 let result = updater.update(cx, |updater, _| updater.take_manual_result());
@@ -3188,10 +3206,84 @@ impl HubView {
             self.settings_page = Some(SettingsPage {
                 ui_font: text_field(settings.ui_font_family.clone(), ".SystemUIFont", cx),
                 code_font: text_field(settings.buffer_font_family.clone(), "JetBrains Mono NL", cx),
+                plugin_fields: Default::default(),
             });
+            self.ensure_plugin_fields(cx);
         }
         window.focus(&self.focus_handle);
         cx.notify();
+    }
+
+    /// A text field for every text or number plugin setting on the page.
+    fn ensure_plugin_fields(&mut self, cx: &mut Context<Self>) {
+        let Some(page) = &self.settings_page else {
+            return;
+        };
+        let settings = Settings::get(cx).clone();
+        let missing: Vec<PluginSetting> = self
+            .plugins
+            .read(cx)
+            .settings_sections()
+            .into_iter()
+            .flat_map(|(_, settings)| settings)
+            .filter(|setting| {
+                matches!(
+                    setting.kind,
+                    SettingKind::Text { .. } | SettingKind::Number { .. }
+                ) && !page.plugin_fields.contains_key(&setting.full_key())
+            })
+            .collect();
+        let mut fields = Vec::new();
+        for setting in missing {
+            let value = setting.text(&setting.value(&settings));
+            let input = cx.new(|cx| {
+                let placeholder = match &setting.kind {
+                    SettingKind::Text { placeholder, .. } => placeholder.clone(),
+                    _ => SharedString::default(),
+                };
+                let mut input = TextInput::single_line(placeholder, cx);
+                input.set_text(value, cx);
+                if matches!(setting.kind, SettingKind::Text { secret: true, .. }) {
+                    input.set_masked(true, cx);
+                }
+                input
+            });
+            fields.push((setting.full_key(), input));
+        }
+        if let Some(page) = &mut self.settings_page {
+            page.plugin_fields.extend(fields);
+        }
+    }
+
+    /// Saves a plugin text or number field when it is confirmed or loses
+    /// focus; a value that does not fit goes back to the saved one.
+    fn commit_plugin_field(&mut self, key: &str, cx: &mut Context<Self>) {
+        let Some(input) = self
+            .settings_page
+            .as_ref()
+            .and_then(|page| page.plugin_fields.get(key))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(setting) = self.plugins.read(cx).setting(key).cloned() else {
+            return;
+        };
+        let current = setting.value(Settings::get(cx));
+        let text = input.read(cx).text().to_string();
+        match setting.parse_text(&text) {
+            Some(value) if value != current => settings::set(cx, key, value),
+            Some(_) => {}
+            None => {
+                let saved = setting.text(&current);
+                input.update(cx, |input, cx| input.set_text(saved, cx));
+                self.notice = Some((
+                    format!("\"{text}\" does not fit {}.", setting.title),
+                    Color::Warning,
+                ));
+                cx.notify();
+            }
+        }
     }
 
     fn close_settings(&mut self, cx: &mut Context<Self>) {
@@ -3230,7 +3322,7 @@ impl HubView {
         let path = file.path.clone();
         let error = file.error.clone();
 
-        let row = |title: &'static str, description: SharedString, control: AnyElement| {
+        let row = |title: SharedString, description: SharedString, control: AnyElement| {
             h_flex()
                 .gap(px(24.))
                 .py(px(12.))
@@ -3253,7 +3345,7 @@ impl HubView {
                 .child(div().min_w(px(0.)).child(control))
                 .into_any_element()
         };
-        let group = |title: &'static str| {
+        let group = |title: SharedString| {
             div().pt(px(24.)).pb(px(4.)).child(
                 Label::new(title)
                     .size(LabelSize::Small)
@@ -3471,6 +3563,20 @@ impl HubView {
                 .into_any_element()
         };
 
+        // Each plugin with settings gets its own group after the app's own.
+        let mut plugin_rows: Vec<AnyElement> = Vec::new();
+        for (name, settings) in self.plugins.read(cx).settings_sections() {
+            plugin_rows.push(group(name).into_any_element());
+            for setting in settings {
+                let control = self.render_plugin_setting(page, &setting, &current, cx);
+                plugin_rows.push(row(
+                    setting.title.clone(),
+                    setting.description.clone().unwrap_or_default(),
+                    control,
+                ));
+            }
+        }
+
         let path_label = sessions::display_path(&path);
         let header = h_flex()
             .gap(px(12.))
@@ -3541,14 +3647,14 @@ impl HubView {
                     .py(px(28.))
                     .child(header)
                     .children(error_banner)
-                    .child(group("Appearance"))
+                    .child(group("Appearance".into()))
                     .child(row(
-                        "Theme",
+                        "Theme".into(),
                         "System follows the system light or dark mode and switches between the two Ayu themes.".into(),
                         theme_control,
                     ))
                     .child(row(
-                        "Your themes",
+                        "Your themes".into(),
                         format!(
                             "JSON files in {themes_label}. Six colors are enough; Zed themes work too. Edits apply on save."
                         )
@@ -3556,29 +3662,144 @@ impl HubView {
                         custom_control,
                     ))
                     .children(theme_banner)
-                    .child(group("Fonts"))
+                    .child(group("Fonts".into()))
                     .child(row(
-                        "Interface font",
+                        "Interface font".into(),
                         "Font family of the whole interface. \".SystemUIFont\" is the system font.".into(),
                         field("ui_font_family", &page.ui_font, cx),
                     ))
                     .child(row(
-                        "Message size",
+                        "Message size".into(),
                         "Text size of your messages and the agent's answers.".into(),
                         stepper("agent_font_size", current.agent_font_size, cx),
                     ))
                     .child(row(
-                        "Code font",
+                        "Code font".into(),
                         "Font family of code blocks, tool output and inline code.".into(),
                         field("buffer_font_family", &page.code_font, cx),
                     ))
                     .child(row(
-                        "Code size",
+                        "Code size".into(),
                         "Text size of code blocks and tool output.".into(),
                         stepper("buffer_font_size", current.buffer_font_size, cx),
-                    )),
+                    ))
+                    .children(plugin_rows),
             )
             .into_any_element()
+    }
+
+    /// The control of one plugin setting: a switch, choices, or a field.
+    fn render_plugin_setting(
+        &self,
+        page: &SettingsPage,
+        setting: &PluginSetting,
+        current: &Settings,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let colors = cx.theme().colors.clone();
+        let key = setting.full_key();
+        let value = setting.value(current);
+        match &setting.kind {
+            SettingKind::Boolean => {
+                let on = value.as_bool().unwrap_or(false);
+                div()
+                    .id(ElementId::Name(format!("plugin-setting:{key}").into()))
+                    .w(px(34.))
+                    .h(px(20.))
+                    .p(px(2.))
+                    .flex()
+                    .items_center()
+                    .when(on, |this| this.justify_end())
+                    .rounded_full()
+                    .border_1()
+                    .cursor_pointer()
+                    .map(|this| {
+                        if on {
+                            this.bg(colors.text_accent).border_color(colors.text_accent)
+                        } else {
+                            this.bg(colors.element_background)
+                                .border_color(colors.border)
+                        }
+                    })
+                    .child(div().size(px(14.)).rounded_full().bg(if on {
+                        colors.editor_background
+                    } else {
+                        colors.icon_muted
+                    }))
+                    .on_click(cx.listener(move |_, _, _, cx| {
+                        settings::set(cx, &key, json!(!on));
+                    }))
+                    .into_any_element()
+            }
+            SettingKind::Select(options) => h_flex()
+                .p(px(2.))
+                .gap(px(2.))
+                .rounded(px(7.))
+                .border_1()
+                .border_color(colors.border_variant)
+                .bg(colors.element_background)
+                .children(options.iter().enumerate().map(|(index, (option, label))| {
+                    let selected = *option == value;
+                    let key = key.clone();
+                    let option = option.clone();
+                    div()
+                        .id(ElementId::Name(
+                            format!("plugin-setting:{key}:{index}").into(),
+                        ))
+                        .h(px(24.))
+                        .px(px(10.))
+                        .flex()
+                        .items_center()
+                        .rounded(px(5.))
+                        .border_1()
+                        .cursor_pointer()
+                        .when(selected, |this| {
+                            this.bg(colors.elevated_surface_background)
+                                .border_color(colors.border)
+                        })
+                        .when(!selected, |this| {
+                            this.border_color(gpui::transparent_black())
+                                .hover(|style| style.bg(colors.ghost_element_hover))
+                        })
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            settings::set(cx, &key, option.clone());
+                        }))
+                        .child(Label::new(label.clone()).size(LabelSize::Small).color(
+                            if selected {
+                                Color::Default
+                            } else {
+                                Color::Muted
+                            },
+                        ))
+                }))
+                .into_any_element(),
+            SettingKind::Text { .. } | SettingKind::Number { .. } => {
+                let Some(input) = page.plugin_fields.get(&key) else {
+                    return div().into_any_element();
+                };
+                let width = if matches!(setting.kind, SettingKind::Number { .. }) {
+                    px(100.)
+                } else {
+                    px(220.)
+                };
+                let submit_key = key.clone();
+                div()
+                    .w(width)
+                    .rounded(px(6.))
+                    .border_1()
+                    .border_color(colors.border)
+                    .bg(colors.editor_background)
+                    .key_context(SETTINGS_FIELD_CONTEXT)
+                    .on_action(cx.listener(move |this, _: &crate::chat::Submit, _, cx| {
+                        this.commit_plugin_field(&submit_key, cx)
+                    }))
+                    .on_mouse_down_out(
+                        cx.listener(move |this, _, _, cx| this.commit_plugin_field(&key, cx)),
+                    )
+                    .child(input.clone())
+                    .into_any_element()
+            }
+        }
     }
 
     /// Looks for pi and package updates in the background.
