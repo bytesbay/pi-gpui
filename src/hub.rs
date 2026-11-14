@@ -1628,7 +1628,12 @@ impl HubView {
     }
 
     /// Both docks are plain sidebars, flush with the window edges.
-    fn render_dock(&self, side: DockSide, cx: &mut Context<Self>) -> Option<AnyElement> {
+    fn render_dock(
+        &self,
+        side: DockSide,
+        corners: gpui::Corners<Pixels>,
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
         let dock = self.docks.dock(side);
         if !dock.is_shown() {
             return None;
@@ -1676,6 +1681,10 @@ impl HubView {
                 .w(px(dock.width))
                 .h_full()
                 .bg(colors.panel_background)
+                .map(|this| match side {
+                    DockSide::Left => this.rounded_bl(corners.bottom_left),
+                    DockSide::Right => this.rounded_br(corners.bottom_right),
+                })
                 .border_color(colors.border_variant)
                 .map(|this| match side {
                     DockSide::Left => this.border_r_1(),
@@ -4412,11 +4421,14 @@ impl HubView {
             })
             .collect();
 
+        let corners = crate::window_frame::content_corners(window);
         h_flex()
             .id("title-bar")
             .flex_none()
             .w_full()
             .h(px(TITLE_BAR_HEIGHT))
+            .rounded_tl(corners.top_left)
+            .rounded_tr(corners.top_right)
             .bg(if is_active {
                 colors.title_bar_background
             } else {
@@ -4652,6 +4664,7 @@ impl Focusable for HubView {
 
 impl Render for HubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let corners = crate::window_frame::content_corners(window);
         if std::mem::take(&mut self.focus_active_chat) {
             match &self.active_chat {
                 Some(chat) => window.focus(&chat.read(cx).composer_focus_handle(cx)),
@@ -4780,6 +4793,10 @@ impl Render for HubView {
             .size_full()
             .font_family(crate::settings::Settings::get(cx).ui_font_family.clone())
             .bg(colors.editor_background)
+            .rounded_tl(corners.top_left)
+            .rounded_tr(corners.top_right)
+            .rounded_bl(corners.bottom_left)
+            .rounded_br(corners.bottom_right)
             .text_color(colors.text)
             .text_size(px(14.))
             .line_height(px(21.))
@@ -4789,7 +4806,7 @@ impl Render for HubView {
                     .flex()
                     .flex_1()
                     .min_h(px(0.))
-                    .children(self.render_dock(DockSide::Left, cx))
+                    .children(self.render_dock(DockSide::Left, corners, cx))
                     .child(
                         v_flex()
                             .flex_1()
@@ -4799,7 +4816,7 @@ impl Render for HubView {
                             .children(notice)
                             .child(main),
                     )
-                    .children(self.render_dock(DockSide::Right, cx)),
+                    .children(self.render_dock(DockSide::Right, corners, cx)),
             )
             .children(
                 self.session_menu

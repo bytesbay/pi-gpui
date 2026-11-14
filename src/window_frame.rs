@@ -5,7 +5,7 @@
 //! frame, the content is returned as it is.
 
 use gpui::{
-    AnyElement, App, Bounds, BoxShadow, CursorStyle, Decorations, HitboxBehavior, Hsla,
+    AnyElement, App, Bounds, BoxShadow, Corners, CursorStyle, Decorations, HitboxBehavior, Hsla,
     IntoElement, MouseButton, Pixels, Point, ResizeEdge, Size, Tiling, Window, canvas, div, point,
     prelude::*, px, size,
 };
@@ -15,6 +15,25 @@ use crate::ui::ActiveTheme as _;
 /// Room around the window for the shadow; also where resizing starts.
 const SHADOW: Pixels = px(10.);
 const ROUNDING: Pixels = px(10.);
+
+/// Radii for content that touches the window's corners. GPUI clips children
+/// to rectangles only, so backgrounds there (the title bar, the docks) must
+/// round themselves to stay inside the frame's rounded border. Zero where
+/// the window manager draws the frame or the corner is tiled.
+pub fn content_corners(window: &Window) -> Corners<Pixels> {
+    let Decorations::Client { tiling } = window.window_decorations() else {
+        return Corners::default();
+    };
+    // Inside the 1 px border.
+    let radius = ROUNDING - px(1.);
+    let round = |free: bool| if free { radius } else { px(0.) };
+    Corners {
+        top_left: round(!(tiling.top || tiling.left)),
+        top_right: round(!(tiling.top || tiling.right)),
+        bottom_left: round(!(tiling.bottom || tiling.left)),
+        bottom_right: round(!(tiling.bottom || tiling.right)),
+    }
+}
 
 pub fn decorate(content: impl IntoElement, window: &mut Window, cx: &mut App) -> AnyElement {
     let Decorations::Client { tiling } = window.window_decorations() else {
