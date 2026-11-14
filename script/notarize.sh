@@ -30,5 +30,11 @@ if [ "$status" != "Accepted" ]; then
     xcrun notarytool log "$id" "$@" >&2 || true
     exit 1
 fi
-xcrun stapler staple "$app"
+# Stapling fetches the ticket from Apple's CDN, which sometimes drops the
+# connection right after notarization; retry before failing the release.
+for attempt in 1 2 3 4 5; do
+    xcrun stapler staple "$app" && break
+    [ "$attempt" = 5 ] && exit 1
+    sleep $((attempt * 10))
+done
 spctl --assess --type execute --verbose=2 "$app"
