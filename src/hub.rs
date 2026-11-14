@@ -1085,6 +1085,7 @@ impl HubView {
         match method.as_str() {
             "sessions.list" => self.list_sessions_for_plugin(&params, reply, cx),
             "sessions.open" => self.open_session_for_plugin(&params, reply, cx),
+            "sessions.rename" => self.rename_session_for_plugin(&params, reply, cx),
             "app.checkUpdates" => self.check_updates_for_plugin(reply, cx),
             "app.restart" => self.restart_app_for_plugin(&params, reply, cx),
             _ if method.starts_with("app.") => {
@@ -1122,6 +1123,107 @@ impl HubView {
                 }
             }
         }
+    }
+
+    /// `sessions.rename`: an open session (by id or file) through its pi, a
+    /// closed one through a short-lived pi, like renaming in the sidebar.
+    fn rename_session_for_plugin(
+        &mut self,
+        params: &Value,
+        reply: PluginReply,
+        cx: &mut Context<Self>,
+    ) {
+        let plugins = self.plugins.clone();
+        let name = params["name"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
+        if name.is_empty() {
+            reply.finish(&plugins, Err("name is empty".into()), cx);
+            return;
+        }
+        let file = params["file"]
+            .as_str()
+            .filter(|file| !file.is_empty())
+            .map(PathBuf::from);
+        let open = match (params["session"].as_str(), &file) {
+            (Some(handle), _) if !handle.is_empty() => match self.chat_by_handle(handle, cx) {
+                Some(chat) => Some(chat),
+                None => {
+                    let error = format!("no open session \"{handle}\"; see sessions.list");
+                    reply.finish(&plugins, Err(error), cx);
+                    return;
+                }
+            },
+            (_, Some(file)) => self
+                .open_chats()
+                .into_iter()
+                .find(|chat| chat.read(cx).session_file() == Some(file.as_path())),
+            _ => {
+                reply.finish(&plugins, Err("give a session id or a file".into()), cx);
+                return;
+            }
+        };
+        if let Some(chat) = open {
+            let command = json!({ "type": "set_session_name", "name": name });
+            chat.update(cx, |chat, cx| {
+                chat.plugin_rpc(&json!({ "command": command }), reply, cx)
+            });
+            return;
+        }
+        let Some(file) = file.filter(|file| file.is_file()) else {
+            reply.finish(&plugins, Err("no such session file".into()), cx);
+            return;
+        };
+        // The project whose session folder holds the file.
+        let workspace = params["workspace"].as_str().map(PathBuf::from).or_else(|| {
+            let folder = file.parent()?;
+            self.workspaces
+                .iter()
+                .find(|entry| {
+                    sessions::session_directories(&entry.path)
+                        .iter()
+                        .any(|directory| directory == folder)
+                })
+                .map(|entry| entry.path.clone())
+        });
+        let Some(workspace) = workspace else {
+            reply.finish(
+                &plugins,
+                Err("give the session's project as workspace".into()),
+                cx,
+            );
+            return;
+        };
+        let InstallationState::Ready(installation) = &self.installation else {
+            reply.finish(&plugins, Err("pi is not ready yet".into()), cx);
+            return;
+        };
+        let installation = installation.clone();
+        self.renaming_sessions.insert(file.clone());
+        cx.notify();
+        let task = cx.background_spawn({
+            let file = file.clone();
+            let workspace = workspace.clone();
+            async move {
+                if let Some(holder) = sessions::foreign_lease_holder(&file) {
+                    return Err(format!("the session is open in {holder}"));
+                }
+                pi::rename_session(installation, workspace, file, name).await
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            this.update(cx, |this, cx| {
+                this.renaming_sessions.remove(&file);
+                this.load_sessions(&workspace, cx);
+                reply.finish(&this.plugins, result.map(|()| json!({})), cx);
+                cx.notify();
+            })
+            .ok();
+        })
+        .detach();
     }
 
     /// `sessions.reload`: a fresh pi for one session, like ⌘⇧R does for all.

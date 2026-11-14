@@ -69,7 +69,7 @@ pub fn list_sessions(workspace: &Path, limit: usize) -> Vec<SessionSummary> {
 /// global `sessionDir` settings, then `<agent dir>/sessions`. Sessions are
 /// normally grouped in a per-workspace subdirectory; a custom directory may be
 /// flat, so both locations are scanned and filtered by the header `cwd`.
-fn session_directories(workspace: &Path) -> Vec<PathBuf> {
+pub fn session_directories(workspace: &Path) -> Vec<PathBuf> {
     let agent_directory = std::env::var_os("PI_CODING_AGENT_DIR")
         .map(PathBuf::from)
         .or_else(|| home_directory().map(|home| home.join(".pi/agent")));

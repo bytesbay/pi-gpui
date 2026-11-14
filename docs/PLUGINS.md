@@ -156,6 +156,7 @@ Requests:
 | `sessions.abort` | `session` | stops the run, like Esc |
 | `sessions.answer` | `session`, `question`, `answer?` / `confirmed?` / `cancel?` | answers the extension question pi waits on. `answer` is an option (or its 1-based number) or text |
 | `sessions.rpc` | `session`, `command` | pi's response data for a pi RPC command. Allowed: reads (`get_state`, `get_messages`, `get_session_stats`, `get_commands`, `get_available_models`, `get_tree`, …) and settings (`set_model`, `set_thinking_level`, `set_session_name`, `compact`, `bash`, `clear_queue`, …). Prompts, forks and session switches are not |
+| `sessions.rename` | `session` or `file`, `name`, `workspace?` | `{}`. Renames an open session (by id or file) through its pi, or a closed session file without opening it, like renaming in the sidebar. `workspace` is the session's project when the app cannot tell |
 | `sessions.reload` | `session`, `force?` | the summary. Restarts pi for the session (like ⌘⇧R for one session) so it picks up updated pi, extensions and settings; the transcript is read again. Fails while pi works unless `force` |
 | `sessions.subscribe` | `session` (an id or `"*"`) | starts the events below |
 | `sessions.unsubscribe` | `session` | stops them |
