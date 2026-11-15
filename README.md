@@ -64,6 +64,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.
 - A context ring next to the model: context used and when pi compacts, prompt cache hit rate and expiry, subscription plan limits, and token totals for the session.
 - Compaction shown in the transcript with token counts and the summary.
+- Command output streams into the transcript while it runs; the log button opens the full output, live or once the command ends, even past pi's 2,000-line cut.
 - Ayu Dark and Ayu Light themes, following the system's light or dark mode by default, plus your own themes (six colors are enough) and Zed themes.
 - Sessions can be renamed, hidden, closed (⌘W stops their pi, the session stays) or deleted (to the Trash).
 - Updates for pi and its extensions next to the pi version, with versions and whether this app supports the new pi. Applied with pi's own `pi update`, only when you click.

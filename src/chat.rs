@@ -1,6 +1,7 @@
 //! One pi session: transcript, composer and its own `pi --mode rpc` process.
 
 mod dialog;
+mod log_viewer;
 mod overlays;
 mod plugin_prompt;
 mod plugin_view;
@@ -12,6 +13,7 @@ mod usage;
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use futures::StreamExt as _;
@@ -55,6 +57,7 @@ actions!(
         TreeGoWithSummary,
         TreeFork,
         TreeClose,
+        LogClose,
         SlashUp,
         SlashDown,
         SlashComplete,
@@ -138,6 +141,7 @@ pub fn bind_keys(cx: &mut App) {
             Some(TREE_CONTEXT),
         ),
         KeyBinding::new("escape", TreeClose, Some(TREE_CONTEXT)),
+        KeyBinding::new("escape", LogClose, Some(log_viewer::LOG_CONTEXT)),
         KeyBinding::new("up", SlashUp, Some(SLASH_CONTEXT)),
         KeyBinding::new("down", SlashDown, Some(SLASH_CONTEXT)),
         KeyBinding::new("tab", SlashComplete, Some(SLASH_CONTEXT)),
@@ -249,6 +253,18 @@ enum SummaryState {
     Aborted,
 }
 
+/// A tool call's output beyond the row's preview.
+#[derive(Clone, Default)]
+struct ToolLog {
+    /// The latest output pi reported. bash sends its last 2,000 lines or
+    /// 50 KB, whichever is less, and saves the whole output to `file`.
+    text: Arc<str>,
+    /// The complete output, when pi saved it because it was cut.
+    file: Option<PathBuf>,
+    started: Option<Instant>,
+    duration_ms: Option<u64>,
+}
+
 /// The session tree overlay (`/tree`, ⌘⇧T).
 struct TreeView {
     /// `None` until `get_entries` answers.
@@ -308,6 +324,8 @@ enum Row {
         expanded: Option<bool>,
         /// The tool call id when a plugin draws a live view in this row.
         view: Option<SharedString>,
+        /// Everything the tool printed, for the log viewer.
+        log: ToolLog,
     },
     Notice {
         tone: Tone,
@@ -375,6 +393,10 @@ pub struct ChatView {
     slash_scroll: ScrollHandle,
     compacting: bool,
     tree: Option<TreeView>,
+    /// The full output of one tool call (the row's log button).
+    log_viewer: Option<log_viewer::LogViewer>,
+    /// The tool call the log viewer shows just ended: load its full log.
+    log_finished: Option<usize>,
     /// A tree navigation prompt in flight: request id and the text to put
     /// back into the composer (when moving to a user message).
     navigating: Option<(String, Option<String>)>,
@@ -503,6 +525,8 @@ impl ChatView {
             slash_scroll: ScrollHandle::new(),
             compacting: false,
             tree: None,
+            log_viewer: None,
+            log_finished: None,
             navigating: None,
             usage_stats: None,
             usage_extra: None,
@@ -638,6 +662,7 @@ impl ChatView {
         self.compacting = false;
         self.navigating = None;
         self.tree = None;
+        self.log_viewer = None;
         self.model_picker = None;
         self.rows.clear();
         self.tool_rows.clear();
@@ -895,6 +920,10 @@ impl ChatView {
                     images: Vec::new(),
                     expanded: None,
                     view: None,
+                    log: ToolLog {
+                        started: Some(Instant::now()),
+                        ..ToolLog::default()
+                    },
                 });
                 if let Some(call_id) = record["toolCallId"].as_str() {
                     self.tool_rows
@@ -922,13 +951,39 @@ impl ChatView {
                     .and_then(|call_id| self.tool_rows.get(call_id).copied());
                 if let Some(index) = index
                     && let Some(Row::Tool {
+                        name,
                         status,
                         output,
                         images,
+                        log,
                         ..
                     }) = self.rows.get_mut(index)
                 {
-                    *output = preview_lines(&content_text(result));
+                    let text = content_text(result);
+                    // Live output shows its newest lines; a finished bash
+                    // too, since the end (errors, exit code) matters most.
+                    *output = if !finished || is_shell(name) {
+                        tail_lines(&text)
+                    } else {
+                        preview_lines(&text)
+                    };
+                    log.text = Arc::from(text);
+                    if let Some(file) = result["details"]["fullOutputPath"].as_str() {
+                        log.file = Some(PathBuf::from(file));
+                    }
+                    if finished {
+                        log.duration_ms = record["durationMs"].as_u64().or_else(|| {
+                            log.started
+                                .map(|started| started.elapsed().as_millis() as u64)
+                        });
+                        if self
+                            .log_viewer
+                            .as_ref()
+                            .is_some_and(|viewer| viewer.row == index)
+                        {
+                            self.log_finished = Some(index);
+                        }
+                    }
                     // Partial results may carry images too (a live preview, frames).
                     let pictures = Picture::from_content(&result["content"]);
                     if finished || !pictures.is_empty() {
@@ -1450,6 +1505,7 @@ impl ChatView {
 
     /// Reloads the transcript after pi moved to another point or session.
     fn reload_transcript(&mut self, cx: &mut Context<Self>) {
+        self.log_viewer = None;
         self.rows.clear();
         self.tool_rows.clear();
         self.active_assistant = None;
@@ -2290,13 +2346,32 @@ impl ChatView {
                 images,
                 expanded,
                 view,
+                log,
             } => {
                 let plugin_view = view
                     .as_ref()
                     .map(|call_id| self.render_plugin_view(call_id, name, cx));
                 let plugin_prompt = self.render_plugin_prompt(index, window, cx);
                 let has_details = !output.is_empty() || !images.is_empty();
-                let open = expanded.unwrap_or(default_open) && has_details;
+                let running = *status == ToolStatus::Running;
+                // Output streams in open, unless the user closed this row.
+                let open = expanded.unwrap_or(default_open || (running && !output.is_empty()))
+                    && has_details;
+                let timing = match (running, log.started, log.duration_ms) {
+                    (true, Some(started), _) => Some(format!("{} s", started.elapsed().as_secs())),
+                    (false, _, Some(ms)) => Some(format_duration(ms)),
+                    _ => None,
+                };
+                let log_button =
+                    (!log.text.is_empty() || log.file.is_some()).then(|| {
+                        IconButton::new(("tool-log", index), IconName::Terminal)
+                            .size(ButtonSize::Compact)
+                            .icon_size(IconSize::XSmall)
+                            .tooltip(Tooltip::text(if running { "Live log" } else { "Full log" }))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.open_log(index, window, cx)
+                            }))
+                    });
                 let status_icon = match status {
                     ToolStatus::Running => Spinner::new()
                         .size(IconSize::XSmall)
@@ -2343,6 +2418,14 @@ impl ChatView {
                                         .truncate(),
                                 ),
                             )
+                            .when_some(timing, |this, timing| {
+                                this.child(
+                                    Label::new(timing)
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Placeholder),
+                                )
+                            })
+                            .children(log_button)
                             .when(has_details, |this| {
                                 this.child(disclosure_button(
                                     ("tool-disclosure", index),
@@ -3141,6 +3224,7 @@ impl Render for ChatView {
             view.scroll_to_selected = false;
         }
         let tree_overlay = self.tree.as_ref().map(|view| self.render_tree(view, cx));
+        let log_overlay = self.render_log_viewer(cx);
 
         let key_context = if self.dialog_takes_keys() {
             format!("{KEY_CONTEXT} {}", dialog::DIALOG_CONTEXT)
@@ -3174,6 +3258,7 @@ impl Render for ChatView {
             .on_action(cx.listener(Self::tree_go_with_summary))
             .on_action(cx.listener(Self::tree_fork))
             .on_action(cx.listener(Self::tree_close))
+            .on_action(cx.listener(Self::log_close))
             .on_action(cx.listener(Self::slash_up))
             .on_action(cx.listener(Self::slash_down))
             .on_action(cx.listener(Self::slash_complete))
@@ -3191,6 +3276,7 @@ impl Render for ChatView {
             .child(body)
             .child(self.render_composer(window, cx))
             .children(tree_overlay)
+            .children(log_overlay)
     }
 }
 
@@ -3298,6 +3384,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                         images: Vec::new(),
                         expanded: None,
                         view: None,
+                        log: ToolLog::default(),
                     });
                     if let Some(id) = block["id"].as_str() {
                         tool_rows.insert(id.to_string(), rows.len() - 1);
@@ -3310,13 +3397,24 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                     .and_then(|id| tool_rows.get(id).copied());
                 if let Some(index) = index
                     && let Some(Row::Tool {
+                        name,
                         status,
                         output,
                         images,
+                        log,
                         ..
                     }) = rows.get_mut(index)
                 {
-                    *output = preview_lines(&content_text(message));
+                    let text = content_text(message);
+                    *output = if is_shell(name) {
+                        tail_lines(&text)
+                    } else {
+                        preview_lines(&text)
+                    };
+                    log.text = Arc::from(text);
+                    log.file = message["details"]["fullOutputPath"]
+                        .as_str()
+                        .map(PathBuf::from);
                     *images = Picture::from_content(&message["content"]);
                     *status = if message["isError"].as_bool() == Some(true) {
                         ToolStatus::Failed
@@ -3325,19 +3423,27 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                     };
                 }
             }
-            "bashExecution" => rows.push(Row::Tool {
-                name: "bash (manual)".to_string(),
-                detail: tool_detail(&json!({ "command": message["command"] })),
-                status: if message["exitCode"].as_i64() == Some(0) {
-                    ToolStatus::Done
-                } else {
-                    ToolStatus::Failed
-                },
-                output: preview_lines(message["output"].as_str().unwrap_or_default()),
-                images: Vec::new(),
-                expanded: None,
-                view: None,
-            }),
+            "bashExecution" => {
+                let text = message["output"].as_str().unwrap_or_default();
+                rows.push(Row::Tool {
+                    name: "bash (manual)".to_string(),
+                    detail: tool_detail(&json!({ "command": message["command"] })),
+                    status: if message["exitCode"].as_i64() == Some(0) {
+                        ToolStatus::Done
+                    } else {
+                        ToolStatus::Failed
+                    },
+                    output: tail_lines(text),
+                    images: Vec::new(),
+                    expanded: None,
+                    view: None,
+                    log: ToolLog {
+                        text: Arc::from(text),
+                        file: message["fullOutputPath"].as_str().map(PathBuf::from),
+                        ..ToolLog::default()
+                    },
+                })
+            }
             "compactionSummary" => rows.push(Row::Summary {
                 kind: SummaryKind::Compaction,
                 state: SummaryState::Done,
@@ -3620,6 +3726,37 @@ fn preview_lines(text: &str) -> String {
     preview
 }
 
+/// The newest lines of output, for a command that is still running (or a
+/// finished one, whose end says how it went).
+fn tail_lines(text: &str) -> String {
+    let lines: Vec<&str> = text.lines().collect();
+    let start = lines.len().saturating_sub(TOOL_OUTPUT_PREVIEW_LINES);
+    let tail = lines[start..].join("\n");
+    // Keep the end of an overlong line, not its start.
+    let tail = match tail.char_indices().rev().nth(TOOL_OUTPUT_PREVIEW_CHARS) {
+        Some((index, _)) => format!("…{}", &tail[index..]),
+        None => tail,
+    };
+    if start > 0 {
+        format!("… {start} earlier lines\n{tail}")
+    } else {
+        tail
+    }
+}
+
+fn is_shell(tool: &str) -> bool {
+    tool == "bash" || tool == "bash (manual)" || tool == "powershell"
+}
+
+/// "850 ms", "4.2 s", "3 m 05 s".
+fn format_duration(ms: u64) -> String {
+    match ms {
+        0..1_000 => format!("{ms} ms"),
+        1_000..60_000 => format!("{:.1} s", ms as f64 / 1000.),
+        _ => format!("{} m {:02} s", ms / 60_000, ms / 1000 % 60),
+    }
+}
+
 fn truncate_chars(text: &str, limit: usize) -> String {
     match text.char_indices().nth(limit) {
         Some((index, _)) => format!("{}…", &text[..index]),
@@ -3629,6 +3766,23 @@ fn truncate_chars(text: &str, limit: usize) -> String {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn tail_keeps_the_newest_lines() {
+        let text: String = (1..=30).map(|line| format!("line {line}\n")).collect();
+        let tail = tail_lines(&text);
+        assert!(tail.starts_with("… 18 earlier lines\nline 19"));
+        assert!(tail.ends_with("line 30"));
+        assert_eq!(tail_lines("one\ntwo"), "one\ntwo");
+    }
+
+    #[test]
+    fn durations_read_naturally() {
+        assert_eq!(format_duration(850), "850 ms");
+        assert_eq!(format_duration(4_210), "4.2 s");
+        assert_eq!(format_duration(185_000), "3 m 05 s");
+    }
+
     use super::*;
 
     #[test]
