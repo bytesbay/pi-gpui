@@ -1,5 +1,5 @@
 #!/bin/sh
-# Regenerates resources/AppIcon.icns from resources/AppIcon.svg.
+# Regenerates resources/AppIcon.icns and the website icons in site/img from resources/AppIcon.svg.
 # With a mark SVG as argument, first rebuilds AppIcon.svg from it:
 #   script/make-icon.sh path/to/pi-mark.svg
 # Needs rsvg-convert (`brew install librsvg`); iconutil ships with macOS.
@@ -23,3 +23,16 @@ done
 iconutil -c icns "$set_dir" -o resources/AppIcon.icns
 rm -rf "$(dirname "$set_dir")"
 echo resources/AppIcon.icns
+
+# Website icons. The app icon keeps the macOS margin around its plate (824 of 1024 px); browsers
+# and home screens expect the artwork to fill the canvas, so the same icon there looks ~20%
+# smaller than its neighbours. Crop to the plate instead.
+plate='viewBox="100 100 824 824"'
+sed "1s/viewBox=\"0 0 1024 1024\"/$plate/" resources/AppIcon.svg > site/img/icon.svg
+rsvg-convert -w 64 -h 64 site/img/icon.svg -o site/img/favicon-64.png
+# apple-touch-icon: opaque square, no corners, shadow or rim. The system applies its own mask.
+touch_svg=$(mktemp).svg
+sed -e 's/ rx="185"//' -e '/app-plate-shadow)"\/>/d' -e '/stroke="url(#app-rim)"/d' site/img/icon.svg > "$touch_svg"
+rsvg-convert -w 180 -h 180 "$touch_svg" -o site/img/apple-touch-icon.png
+rm -f "$touch_svg"
+echo site/img/icon.svg site/img/favicon-64.png site/img/apple-touch-icon.png
