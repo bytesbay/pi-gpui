@@ -10,8 +10,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
-use futures::StreamExt as _;
-use futures::channel::mpsc;
+use futures::channel::{mpsc, oneshot};
+use futures::future::Shared;
+use futures::{FutureExt as _, StreamExt as _};
 use gpui::{
     AppContext as _, AsyncApp, Context, Entity, EventEmitter, KeyBinding, Keystroke, SharedString,
     Task, WeakEntity,
@@ -198,6 +199,7 @@ pub struct PluginRegistry {
     /// The settings each running plugin last got, to send only changes.
     sent_settings: HashMap<SharedString, Value>,
     frames: Entity<ViewFrames>,
+    loaded: Shared<oneshot::Receiver<()>>,
     _load_task: Task<()>,
 }
 
@@ -214,10 +216,12 @@ impl PluginRegistry {
             this.send_settings(cx)
         })
         .detach();
+        let (loaded_sender, loaded) = oneshot::channel::<()>();
         let load_task = cx.spawn(async move |this, cx| {
             let found = discovery.await;
             this.update(cx, |this, cx| this.register(found, key_context, cx))
                 .ok();
+            loaded_sender.send(()).ok();
         });
         Self {
             plugins: Vec::new(),
@@ -232,7 +236,17 @@ impl PluginRegistry {
             settings: Vec::new(),
             sent_settings: HashMap::new(),
             frames: cx.new(|_| ViewFrames::default()),
+            loaded: loaded.shared(),
             _load_task: load_task,
+        }
+    }
+
+    /// Resolves once the manifests are read. pi must not start before that:
+    /// a session started earlier would miss the plugins' pi extensions.
+    pub fn loaded(&self) -> impl Future<Output = ()> + use<> {
+        let loaded = self.loaded.clone();
+        async move {
+            loaded.await.ok();
         }
     }
 

@@ -67,6 +67,8 @@ const SETTINGS_FIELD_CONTEXT: &str = "SettingsField";
 /// Height of the strip of open session tabs above the chat.
 const TAB_BAR_HEIGHT: f32 = 34.;
 const SESSIONS_PER_WORKSPACE: usize = 20;
+/// How long the first sessions wait for plugin manifests to be read.
+const PLUGIN_LOAD_PATIENCE: std::time::Duration = std::time::Duration::from_secs(3);
 /// Our own title bar replaces the native one (see `main.rs`). The traffic
 /// lights are placed at (12, 11) so they sit centered in this height.
 pub const TITLE_BAR_HEIGHT: f32 = 38.;
@@ -720,8 +722,14 @@ impl HubView {
     fn check_installation(&mut self, cx: &mut Context<Self>) {
         self.installation = InstallationState::Checking;
         let check = cx.background_spawn(async { pi::check_installation() });
+        // Sessions start once plugins are known, so pi gets their extensions.
+        // Reading a plugin folder can wait on a macOS permission prompt; do
+        // not hold the sessions for that.
+        let plugins_loaded = self.plugins.read(cx).loaded();
+        let patience = cx.background_executor().timer(PLUGIN_LOAD_PATIENCE);
         self._check_task = cx.spawn(async move |this, cx| {
             let result = check.await;
+            futures::future::select(Box::pin(plugins_loaded), Box::pin(patience)).await;
             this.update(cx, |this, cx| {
                 match result {
                     Ok(installation) => {
