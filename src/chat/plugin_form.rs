@@ -386,12 +386,17 @@ impl ChatView {
                     .id(("form-option", position * 100 + option))
                     .items_start()
                     .gap(px(8.))
-                    .px(px(8.))
-                    .py(px(5.))
+                    .px(px(7.))
+                    .py(px(4.))
                     .rounded(px(5.))
                     .cursor_pointer()
+                    // A ring as well as a fill: on some themes the fill alone
+                    // is the color of the card.
+                    .border_1()
+                    .border_color(gpui::transparent_black())
                     .when(option == highlight && card_focused, |this| {
-                        this.bg(colors.element_selected)
+                        this.bg(colors.element_hover)
+                            .border_color(colors.border_focused)
                     })
                     .hover(|style| style.bg(colors.element_hover))
                     .child(div().pt(px(2.)).child(marker(checked)))
@@ -522,7 +527,9 @@ impl ChatView {
                 this.child(v_flex().gap(px(2.)).children(options).children(text_row))
             })
             .child(
+                // The key hints drop to a second line in a narrow chat.
                 h_flex()
+                    .flex_wrap()
                     .gap(px(6.))
                     .when(state.step > 0, |this| {
                         this.child(
@@ -552,15 +559,20 @@ impl ChatView {
                                 move |this, _, window, cx| this.form_cancel(&key, window, cx)
                             })),
                     )
-                    .child(div().flex_1())
-                    .when(!question.options.is_empty(), |this| {
-                        this.child(hint("↑↓", "move")).child(hint(
-                            "Space",
-                            if question.multiple { "toggle" } else { "pick" },
-                        ))
-                    })
-                    .child(hint("Enter", if last { "submit" } else { "next" }))
-                    .child(hint("Esc", "cancel")),
+                    .child(
+                        h_flex()
+                            .ml_auto()
+                            .flex_none()
+                            .gap(px(6.))
+                            .when(!question.options.is_empty(), |this| {
+                                this.child(hint("↑↓", "move")).child(hint(
+                                    "Space",
+                                    if question.multiple { "toggle" } else { "pick" },
+                                ))
+                            })
+                            .child(hint("Enter", if last { "submit" } else { "next" }))
+                            .child(hint("Esc", "cancel")),
+                    ),
             )
             .into_any_element()
     }
