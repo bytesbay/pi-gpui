@@ -239,7 +239,6 @@ impl PluginRegistry {
         let load_task = cx.spawn(async move |this, cx| {
             let found = discovery.await;
             this.update(cx, |this, cx| this.register(found, key_context, cx))
-    loaded: Shared<oneshot::Receiver<()>>,
                 .ok();
             loaded_sender.send(()).ok();
         });
@@ -258,16 +257,6 @@ impl PluginRegistry {
             frames: cx.new(|_| ViewFrames::default()),
             loaded: loaded.shared(),
             _load_task: load_task,
-        let (loaded_sender, loaded) = oneshot::channel::<()>();
-        }
-    }
-
-    /// Resolves once the manifests are read. pi must not start before that:
-    /// a session started earlier would miss the plugins' pi extensions.
-    pub fn loaded(&self) -> impl Future<Output = ()> + use<> {
-        let loaded = self.loaded.clone();
-        async move {
-            loaded.await.ok();
         }
     }
 
@@ -281,7 +270,6 @@ impl PluginRegistry {
     }
 
     fn register(
-            loaded_sender.send(()).ok();
         &mut self,
         found: Vec<Result<(PathBuf, ParsedManifest), String>>,
         key_context: &'static str,
@@ -296,20 +284,10 @@ impl PluginRegistry {
                     errors.push(error);
                     continue;
                 }
-            loaded: loaded.shared(),
             };
             if self.plugins.iter().any(|plugin| plugin.id == parsed.id) {
                 errors.push(format!(
                     "Plugin {} is already loaded; skipped the copy in {}.",
-    /// Resolves once the manifests are read. pi must not start before that:
-    /// a session started earlier would miss the plugins' pi extensions.
-    pub fn loaded(&self) -> impl Future<Output = ()> + use<> {
-        let loaded = self.loaded.clone();
-        async move {
-            loaded.await.ok();
-        }
-    }
-
                     parsed.id,
                     plugin_dir.display()
                 ));
