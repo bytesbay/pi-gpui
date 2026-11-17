@@ -1,0 +1,11 @@
+{
+  "id": "ask",
+  "name": "Ask",
+  "version": "0.1.0",
+  "protocol": 1,
+  "run": ["node", "plugin.mjs"],
+  "contributes": {
+    "piExtensions": ["./pi-extension.ts"],
+    "toolEvents": ["ask_user_question"]
+  }
+}
