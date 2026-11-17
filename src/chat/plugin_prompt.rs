@@ -1,21 +1,29 @@
-//! Text fields plugins ask for inside tool calls (`prompt.input`), e.g. the
-//! value of a secret the agent requested. The field sits in the tool call
+//! What plugins ask the user inside tool calls: a text field (`prompt.input`),
+//! e.g. the value of a secret the agent requested, or a form of questions
+//! (`prompt.form`, drawn in plugin_form.rs). The prompt sits in the tool call
 //! row, so the question and the call that needs it stay together.
 //!
 //! The answer goes to the plugin, never to pi: a secret typed here does not
 //! enter the transcript. A prompt closes when it is answered or cancelled,
 //! when the plugin closes it, or when its tool call ends.
 
+use super::plugin_form::FormState;
 use super::*;
+use crate::plugins::PromptAnswer;
 
 pub(super) const PROMPT_CONTEXT: &str = "PluginPrompt";
 
-/// The field of one open prompt in this chat.
+/// One open prompt in this chat.
 pub(super) struct PromptField {
-    plugin_id: SharedString,
-    id: SharedString,
-    call_id: SharedString,
-    input: Entity<TextInput>,
+    pub(super) plugin_id: SharedString,
+    pub(super) id: SharedString,
+    pub(super) call_id: SharedString,
+    pub(super) body: PromptBody,
+}
+
+pub(super) enum PromptBody {
+    Input(Entity<TextInput>),
+    Form(FormState),
 }
 
 impl ChatView {
@@ -44,31 +52,37 @@ impl ChatView {
             let existing = self
                 .prompt_fields
                 .iter()
-                .find(|field| field.plugin_id == prompt.plugin_id && field.id == prompt.id);
-            if let Some(field) = existing {
-                // The plugin may re-ask with other settings (a new placeholder).
-                let (placeholder, secret) = (prompt.placeholder.clone(), prompt.secret);
-                field.input.update(cx, |input, cx| {
-                    input.set_placeholder(placeholder, cx);
-                    if !secret && input.is_masked() {
-                        input.set_masked(false, cx);
+                .position(|field| field.plugin_id == prompt.plugin_id && field.id == prompt.id);
+            let row = self.tool_rows.get(prompt.call_id.as_ref()).copied();
+            if let Some(position) = existing {
+                // The plugin may re-ask with other settings (a new placeholder)
+                // or other questions; new questions start the form over.
+                match (&self.prompt_fields[position].body, &prompt.form) {
+                    (PromptBody::Input(input), None) => {
+                        let (placeholder, secret) = (prompt.placeholder.clone(), prompt.secret);
+                        input.update(cx, |input, cx| {
+                            input.set_placeholder(placeholder, cx);
+                            if !secret && input.is_masked() {
+                                input.set_masked(false, cx);
+                            }
+                        });
+                        continue;
                     }
-                });
+                    (PromptBody::Form(state), Some(form)) if state.is_for(form) => continue,
+                    _ => {}
+                }
+                self.prompt_fields[position].body = self.new_prompt_body(&prompt, cx);
+                changed.extend(row);
+                self.focus_prompt = true;
                 continue;
             }
-            let input = cx.new(|cx| {
-                let mut input = TextInput::single_line(prompt.placeholder.clone(), cx);
-                input.set_masked(prompt.secret, cx);
-                input
-            });
-            if let Some(row) = self.tool_rows.get(prompt.call_id.as_ref()) {
-                changed.push(*row);
-            }
+            changed.extend(row);
+            let body = self.new_prompt_body(&prompt, cx);
             self.prompt_fields.push(PromptField {
                 plugin_id: prompt.plugin_id,
                 id: prompt.id,
                 call_id: prompt.call_id,
-                input,
+                body,
             });
             self.focus_prompt = true;
         }
@@ -77,13 +91,30 @@ impl ChatView {
         }
     }
 
+    fn new_prompt_body(
+        &self,
+        prompt: &plugins::PluginPrompt,
+        cx: &mut Context<Self>,
+    ) -> PromptBody {
+        match &prompt.form {
+            Some(form) => PromptBody::Form(FormState::new(form.clone(), cx)),
+            None => PromptBody::Input(cx.new(|cx| {
+                let mut input = TextInput::single_line(prompt.placeholder.clone(), cx);
+                input.set_masked(prompt.secret, cx);
+                input
+            })),
+        }
+    }
+
     /// Gives the keyboard to a prompt that just opened. Called from render.
     pub(super) fn focus_new_prompt(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !std::mem::take(&mut self.focus_prompt) {
             return;
         }
-        if let Some(field) = self.prompt_fields.last() {
-            window.focus(&field.input.read(cx).focus_handle(cx));
+        match self.prompt_fields.last().map(|field| &field.body) {
+            Some(PromptBody::Input(input)) => window.focus(&input.read(cx).focus_handle(cx)),
+            Some(PromptBody::Form(state)) => state.focus(window, cx),
+            None => {}
         }
     }
 
@@ -101,7 +132,7 @@ impl ChatView {
         });
     }
 
-    fn field_index(&self, id: &(SharedString, SharedString)) -> Option<usize> {
+    pub(super) fn field_index(&self, id: &(SharedString, SharedString)) -> Option<usize> {
         self.prompt_fields
             .iter()
             .position(|field| field.plugin_id == id.0 && field.id == id.1)
@@ -117,29 +148,54 @@ impl ChatView {
         let Some(field) = self.field_index(id).map(|index| &self.prompt_fields[index]) else {
             return;
         };
-        let value = submit.then(|| field.input.read(cx).text().trim().to_string());
-        if value.as_ref().is_some_and(String::is_empty) {
+        let PromptBody::Input(input) = &field.body else {
             return;
-        }
-        let (plugin_id, id) = (field.plugin_id.clone(), field.id.clone());
+        };
+        let answer = if submit {
+            let value = input.read(cx).text().trim().to_string();
+            if value.is_empty() {
+                return;
+            }
+            PromptAnswer::Text(value)
+        } else {
+            PromptAnswer::Cancelled {
+                answers: None,
+                closed: false,
+            }
+        };
         // Drop the text from memory now; the field goes away with the prompt.
-        field.input.update(cx, |input, cx| input.clear(cx));
+        input.update(cx, |input, cx| input.clear(cx));
+        self.send_prompt_answer(id, answer, window, cx);
+    }
+
+    /// Sends the answer to the plugin and gives the keyboard back to the
+    /// message field.
+    pub(super) fn send_prompt_answer(
+        &mut self,
+        id: &(SharedString, SharedString),
+        answer: PromptAnswer,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.plugins.update(cx, |registry, cx| {
-            registry.answer_prompt(&plugin_id, &id, value, false, cx)
+            registry.answer_prompt(&id.0, &id.1, answer, cx)
         });
         window.focus(&self.composer.read(cx).focus_handle(cx));
     }
 
     fn toggle_prompt_mask(&mut self, id: &(SharedString, SharedString), cx: &mut Context<Self>) {
-        if let Some(field) = self.field_index(id).map(|index| &self.prompt_fields[index]) {
-            field.input.update(cx, |input, cx| {
+        if let Some(PromptBody::Input(input)) = self
+            .field_index(id)
+            .map(|index| &self.prompt_fields[index].body)
+        {
+            input.update(cx, |input, cx| {
                 let masked = input.is_masked();
                 input.set_masked(!masked, cx);
             });
         }
     }
 
-    /// The field of the prompt open in the tool call shown at row `index`.
+    /// The prompt open in the tool call shown at row `index`.
     pub(super) fn render_plugin_prompt(
         &self,
         index: usize,
@@ -159,8 +215,14 @@ impl ChatView {
             .iter()
             .find(|prompt| prompt.plugin_id == field.plugin_id && prompt.id == field.id)?
             .clone();
+        let field_input = match &field.body {
+            PromptBody::Input(input) => input.clone(),
+            PromptBody::Form(state) => {
+                return Some(self.render_plugin_form(position, key, &prompt, state, window, cx));
+            }
+        };
         let colors = cx.theme().colors.clone();
-        let input = field.input.read(cx);
+        let input = field_input.read(cx);
         let focused = input.focus_handle(cx).is_focused(window);
         let masked = input.is_masked();
         let empty = input.text().trim().is_empty();
@@ -188,7 +250,7 @@ impl ChatView {
                     .flex_1()
                     .min_w(px(0.))
                     .py(px(2.))
-                    .child(field.input.clone()),
+                    .child(field_input.clone()),
             )
             .when(prompt.secret, |this| {
                 this.child(

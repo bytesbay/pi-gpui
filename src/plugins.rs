@@ -19,8 +19,10 @@ use gpui::{
 };
 use serde_json::{Value, json};
 
+mod form;
 mod settings;
 
+pub use form::{FormAnswer, FormQuestion, PromptForm};
 pub use settings::{PluginSetting, SettingKind};
 
 use crate::jsonl::{JsonlMessage, JsonlProcess};
@@ -68,8 +70,9 @@ pub struct ToolView {
     pub aspect: f32,
 }
 
-/// A text field a plugin asks for inside a tool call (`prompt.input`), for
-/// example the value of a secret the agent requested.
+/// Something a plugin asks the user inside a tool call: a text field
+/// (`prompt.input`), for example the value of a secret the agent requested,
+/// or a form of questions (`prompt.form`).
 #[derive(Clone)]
 pub struct PluginPrompt {
     pub plugin_id: SharedString,
@@ -81,6 +84,22 @@ pub struct PluginPrompt {
     pub submit_label: SharedString,
     /// Typed text is shown as dots and never copied.
     pub secret: bool,
+    /// The questions of a `prompt.form`; `None` for a text field.
+    pub form: Option<Arc<PromptForm>>,
+}
+
+/// How a prompt ended.
+pub enum PromptAnswer {
+    /// The text of a `prompt.input`.
+    Text(String),
+    /// The `answers` of a `prompt.form`.
+    Form(Value),
+    /// No answer. `answers` is what a form had so far; `closed` tells the
+    /// plugin nobody waits for an answer anymore (the tool call ended).
+    Cancelled {
+        answers: Option<Value>,
+        closed: bool,
+    },
 }
 
 /// Frames of plugin views. Separate from the registry so a frame only
@@ -186,7 +205,7 @@ pub struct PluginRegistry {
     /// Tools whose calls a plugin follows (`contributes.toolEvents`): plugin
     /// id and tool name.
     tool_events: Vec<(SharedString, SharedString)>,
-    /// Open `prompt.input` fields, oldest first.
+    /// Open prompts (`prompt.input`, `prompt.form`), oldest first.
     prompts: Vec<PluginPrompt>,
     /// pi extensions plugins ship (`contributes.piExtensions`), loaded into
     /// every pi this app starts.
@@ -220,6 +239,7 @@ impl PluginRegistry {
         let load_task = cx.spawn(async move |this, cx| {
             let found = discovery.await;
             this.update(cx, |this, cx| this.register(found, key_context, cx))
+    loaded: Shared<oneshot::Receiver<()>>,
                 .ok();
             loaded_sender.send(()).ok();
         });
@@ -238,6 +258,16 @@ impl PluginRegistry {
             frames: cx.new(|_| ViewFrames::default()),
             loaded: loaded.shared(),
             _load_task: load_task,
+        let (loaded_sender, loaded) = oneshot::channel::<()>();
+        }
+    }
+
+    /// Resolves once the manifests are read. pi must not start before that:
+    /// a session started earlier would miss the plugins' pi extensions.
+    pub fn loaded(&self) -> impl Future<Output = ()> + use<> {
+        let loaded = self.loaded.clone();
+        async move {
+            loaded.await.ok();
         }
     }
 
@@ -251,6 +281,7 @@ impl PluginRegistry {
     }
 
     fn register(
+            loaded_sender.send(()).ok();
         &mut self,
         found: Vec<Result<(PathBuf, ParsedManifest), String>>,
         key_context: &'static str,
@@ -265,10 +296,20 @@ impl PluginRegistry {
                     errors.push(error);
                     continue;
                 }
+            loaded: loaded.shared(),
             };
             if self.plugins.iter().any(|plugin| plugin.id == parsed.id) {
                 errors.push(format!(
                     "Plugin {} is already loaded; skipped the copy in {}.",
+    /// Resolves once the manifests are read. pi must not start before that:
+    /// a session started earlier would miss the plugins' pi extensions.
+    pub fn loaded(&self) -> impl Future<Output = ()> + use<> {
+        let loaded = self.loaded.clone();
+        async move {
+            loaded.await.ok();
+        }
+    }
+
                     parsed.id,
                     plugin_dir.display()
                 ));
@@ -517,15 +558,12 @@ impl PluginRegistry {
         &self.prompts
     }
 
-    /// Sends the answer to an open prompt and removes it. `None` cancels;
-    /// `closed` tells the plugin nobody waits for an answer anymore (the tool
-    /// call ended).
+    /// Sends the answer to an open prompt and removes it.
     pub fn answer_prompt(
         &mut self,
         plugin_id: &str,
         id: &str,
-        value: Option<String>,
-        closed: bool,
+        answer: PromptAnswer,
         cx: &mut Context<Self>,
     ) {
         let Some(position) = self
@@ -536,9 +574,16 @@ impl PluginRegistry {
             return;
         };
         let prompt = self.prompts.remove(position);
-        let params = match value {
-            Some(value) => json!({ "id": prompt.id, "value": value }),
-            None => json!({ "id": prompt.id, "cancelled": true, "closed": closed }),
+        let params = match answer {
+            PromptAnswer::Text(value) => json!({ "id": prompt.id, "value": value }),
+            PromptAnswer::Form(answers) => json!({ "id": prompt.id, "answers": answers }),
+            PromptAnswer::Cancelled { answers, closed } => {
+                let mut params = json!({ "id": prompt.id, "cancelled": true, "closed": closed });
+                if let Some(answers) = answers {
+                    params["answers"] = answers;
+                }
+                params
+            }
         };
         self.send(
             &prompt.plugin_id,
@@ -557,11 +602,22 @@ impl PluginRegistry {
             .map(|prompt| (prompt.plugin_id.clone(), prompt.id.clone()))
             .collect();
         for (plugin_id, id) in open {
-            self.answer_prompt(&plugin_id, &id, None, true, cx);
+            let answer = PromptAnswer::Cancelled {
+                answers: None,
+                closed: true,
+            };
+            self.answer_prompt(&plugin_id, &id, answer, cx);
         }
     }
 
-    fn open_prompt(&mut self, plugin_id: &SharedString, params: &Value) {
+    /// Opens a `prompt.input` field or, with `is_form`, a `prompt.form`.
+    fn open_prompt(
+        &mut self,
+        plugin_id: &SharedString,
+        params: &Value,
+        is_form: bool,
+        cx: &mut Context<Self>,
+    ) {
         let text = |key: &str| {
             params[key]
                 .as_str()
@@ -570,13 +626,27 @@ impl PluginRegistry {
                 .map(|text| SharedString::from(text.to_string()))
         };
         let (Some(id), Some(call_id)) = (text("id"), text("callId")) else {
-            eprintln!("pi-gpui: plugin {plugin_id}: prompt.input needs an id and a callId");
+            eprintln!("pi-gpui: plugin {plugin_id}: a prompt needs an id and a callId");
             return;
         };
-        let secret = params["secret"].as_bool().unwrap_or(false);
+        let form = match is_form.then(|| PromptForm::parse(params)).transpose() {
+            Ok(form) => form.map(Arc::new),
+            Err(error) => {
+                // The plugin's tool is waiting: tell it the form will not show.
+                eprintln!("pi-gpui: plugin {plugin_id}: {error}");
+                let params = json!({ "id": id, "cancelled": true, "error": error });
+                self.send(
+                    plugin_id,
+                    json!({ "method": "prompt.result", "params": params }),
+                    cx,
+                );
+                return;
+            }
+        };
+        let secret = !is_form && params["secret"].as_bool().unwrap_or(false);
         let prompt = PluginPrompt {
             plugin_id: plugin_id.clone(),
-            title: text("title").unwrap_or_else(|| "Input".into()),
+            title: text("title").unwrap_or_else(|| if is_form { "" } else { "Input" }.into()),
             description: text("description"),
             placeholder: text("placeholder").unwrap_or_else(|| {
                 if secret {
@@ -587,6 +657,7 @@ impl PluginRegistry {
             }),
             submit_label: text("submitLabel").unwrap_or_else(|| "Submit".into()),
             secret,
+            form,
             id,
             call_id,
         };
@@ -949,6 +1020,7 @@ impl PluginRegistry {
                                     | "status.set"
                                     | "status.clear"
                                     | "prompt.input"
+                                    | "prompt.form"
                                     | "prompt.close"
                             );
                             self.apply_record(plugin_id, &record, cx);
@@ -1033,7 +1105,8 @@ impl PluginRegistry {
                 color: tone_color(params["tone"].as_str()),
             }),
             "view.frame" => self.apply_frame(plugin_id, params, cx),
-            "prompt.input" => self.open_prompt(plugin_id, params),
+            "prompt.input" => self.open_prompt(plugin_id, params, false, cx),
+            "prompt.form" => self.open_prompt(plugin_id, params, true, cx),
             "prompt.close" => {
                 let id = params["id"].as_str().unwrap_or_default();
                 self.prompts

@@ -3,6 +3,7 @@
 mod dialog;
 mod log_viewer;
 mod overlays;
+mod plugin_form;
 mod plugin_prompt;
 mod plugin_view;
 mod remote;

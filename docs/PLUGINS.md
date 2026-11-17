@@ -74,6 +74,50 @@ A prompt closes when it is answered, when the plugin sends `prompt.close`, when 
 
 The [Secrets plugin](../examples/plugins/secrets) is a complete example: a pi tool `request_secret` that waits while the plugin asks for the value in a masked field, stores it in a file and tells the tool only the outcome.
 
+### Forms
+
+`prompt.form` asks several questions in one tool call. The app draws the form, one question at a time, and keeps the answers while the user moves between questions. The plugin gets all of them in one `prompt.result`.
+
+```json
+{"method":"prompt.form","params":{
+  "id":"call_1","callId":"call_1","title":"Project setup","submitLabel":"Send answers",
+  "questions":[
+    {"id":"db","title":"Which database?","description":"Used for accounts and billing.",
+     "options":[{"label":"Postgres","description":"Relational"},"SQLite"],"allowText":true},
+    {"id":"features","title":"Which features?","options":["Auth","Billing","Search"],"multiple":true,"required":false},
+    {"id":"notes","title":"Anything else?"}
+  ]}}
+```
+
+| Question field | Meaning |
+|---|---|
+| `title` | the question. Required |
+| `id` | echoed in the answer. Default: the question's position (`"0"`, `"1"`, ...) |
+| `description` | a note under the question |
+| `options` | choices: strings or `{ "label", "description?" }`, at most 20. Without options the question is answered with text |
+| `multiple` | several options can be picked (checkboxes). Default: one (radio buttons) |
+| `allowText` | adds a field for an answer of the user's own. With one choice allowed, typed text replaces the picked option; with `multiple` it comes next to them |
+| `required` | the form does not move on until the question has an answer. Default `true` |
+| `placeholder` | placeholder of the text field |
+
+A form takes at most 20 questions. With more than one it shows a `2 / 4` counter and Back / Next; the last question has the submit button. Arrows move between the options, Space or a digit picks, Enter goes on, Left and Right change the question, Esc cancels.
+
+The answer has one entry per question, in the order they were asked:
+
+```json
+{"method":"prompt.result","params":{"id":"call_1","answers":[
+  {"id":"db","selected":[],"labels":[],"text":"MySQL"},
+  {"id":"features","selected":[0,2],"labels":["Auth","Search"]},
+  {"id":"notes","selected":[],"labels":[]}
+]}}
+```
+
+`selected` holds the indexes of the picked options, `labels` their labels, `text` what the user typed (absent when empty). When the user cancels, `prompt.result` has `cancelled: true` and `answers` with what was given so far. A form the app cannot show (no questions, a question without a title) is answered at once with `cancelled: true` and an `error` text.
+
+Sending `prompt.form` again with the same `id` and other questions starts the form over. Forms close the same way as text prompts.
+
+The [Ask plugin](../examples/plugins/ask) is a complete example: a pi tool `ask_user_question` that takes several questions and returns the answers to the agent.
+
 ### Settings
 
 A plugin declares its settings in the manifest; the Settings page shows them in a group named after the plugin, and settings.json stores them as top-level `"<plugin id>.<key>"` values (`"remote-mcp.port": 7319`), so they can be edited by hand like any other setting.
@@ -111,7 +155,7 @@ A plugin message with an `id` is a request: the app always answers it with `{"id
 | `view.open` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi called a tool this plugin draws; stream to `callId` from now on |
 | `view.focus` | `callId`, `focused` | the view got or lost the keyboard |
 | `tool.start` | `tool`, `callId`, `args`, `workspace?`, `session?` | pi started a call of a tool in `contributes.toolEvents` |
-| `prompt.result` | `id`, `value` or `cancelled`, `closed?` | the user answered or cancelled a prompt; `closed` means its tool call ended first |
+| `prompt.result` | `id`, `value` or `answers` or `cancelled`, `closed?` | the user answered or cancelled a prompt: `value` for `prompt.input`, `answers` for `prompt.form` (see Forms). `closed` means its tool call ended first |
 | `view.key` | `callId`, `key`, `down` | a key went down or up in a focused view. `key` is GPUI's name (`up`, `space`, `a`; the typed character on non-Latin layouts); modifiers come as `control`, `shift`, `alt` |
 
 ### Plugin → app
@@ -126,6 +170,7 @@ A plugin message with an `id` is a request: the app always answers it with `{"id
 | `notify` | `message`, `tone?` | a notice in the window |
 | `view.frame` | `callId`, `data`, `mimeType` | a frame for a live view: base64 `image/jpeg` or `image/png`. Ignored unless `callId` is the call the plugin streams to |
 | `prompt.input` | `id`, `callId`, `title`, `description?`, `placeholder?`, `submitLabel?`, `secret?` | a text field in that tool call (see Prompts). The same `id` again updates the open prompt |
+| `prompt.form` | `id`, `callId`, `questions`, `title?`, `submitLabel?` | a form of questions in that tool call (see Forms) |
 | `prompt.close` | `id` | removes an open prompt without an answer |
 | `log` | `message` | a line in the app log (stderr) |
 
