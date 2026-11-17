@@ -1,4 +1,6 @@
 mod attachments;
+#[cfg(all(debug_assertions, target_os = "macos"))]
+mod automation;
 mod chat;
 mod diff;
 mod dock;
@@ -159,13 +161,22 @@ fn main() {
             }
         };
 
+        // A window driven by automation stays behind the user's work.
+        #[cfg(all(debug_assertions, target_os = "macos"))]
+        let activate = automation::folder().is_none();
+        #[cfg(not(all(debug_assertions, target_os = "macos")))]
+        let activate = true;
         let focused = window.update(cx, |view, window, cx| {
             window.focus(&view.focus_handle(cx));
-            cx.activate(true);
+            if activate {
+                cx.activate(true);
+            }
         });
         if let Err(error) = focused {
             eprintln!("pi-gpui: failed to focus the window: {error:#}");
         }
+        #[cfg(all(debug_assertions, target_os = "macos"))]
+        automation::start(window.into(), cx);
 
         cx.spawn(async move |cx| {
             while let Some(urls) = url_receiver.next().await {
