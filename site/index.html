@@ -28,7 +28,7 @@
 <link rel="icon" href="/img/favicon-64.png" type="image/png" sizes="64x64">
 <link rel="apple-touch-icon" href="/img/apple-touch-icon.png">
 <link rel="preload" href="/fonts/JetBrainsMonoNL-Regular.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="/styles.css?v=12">
+<link rel="stylesheet" href="/styles.css?v=13">
 
 <script type="application/ld+json">
 {
@@ -55,20 +55,86 @@
   "@context": "https://schema.org",
   "@type": "FAQPage",
   "mainEntity": [
-    { "@type": "Question", "name": "What is Pi GPUI?",
-      "acceptedAnswer": { "@type": "Answer", "text": "A desktop app for the pi coding agent, for macOS and Linux. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU." } },
-    { "@type": "Question", "name": "Is there a GUI for pi?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. Pi GPUI is a free native GUI for pi on macOS and Linux, written in Rust with GPUI, without Electron or a webview. Web, Electron, Tauri and editor options also exist, and awesome-pi-agent lists them." } },
-    { "@type": "Question", "name": "Can I use Claude models?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes, if your pi is set up for them. Pi GPUI runs your pi with its models, extensions and skills as they are." } },
-    { "@type": "Question", "name": "Is it written in Rust?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. The app is Rust on GPUI, the UI framework behind the Zed editor, and renders with Metal on macOS and Vulkan on Linux. pi itself stays the agent engine; the app talks to it over JSON lines." } },
-    { "@type": "Question", "name": "Do I need pi installed?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes, pi 1.4 or newer within pi 1.x. The app finds pi in PI_EXECUTABLE, PATH or your login shell, so nvm installs work. It never installs or updates pi on its own." } },
-    { "@type": "Question", "name": "Which systems does it run on?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Macs with Apple silicon on macOS 13 or newer, and Linux on x86_64 and arm64 (beta; X11 and Wayland, glibc 2.35 or newer, a Vulkan driver). The app updates itself from GitHub releases. Windows is not supported." } },
-    { "@type": "Question", "name": "Is it free?",
-      "acceptedAnswer": { "@type": "Answer", "text": "Yes. It is free and open source under the MIT license, with the source on GitHub." } }
+    {
+      "@type": "Question",
+      "name": "What is Pi GPUI?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "A desktop app for the pi coding agent, for macOS and Linux. It runs the pi you have installed and shows your projects, sessions, tool calls and answers in one window drawn on the GPU."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is there a GUI for pi?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, several. Pi GPUI is a free native GUI for the pi coding agent on macOS and Linux, written in Rust with GPUI, without Electron or a webview. Orbit is native too, pi-gui, PI-Desktop, Pi Desktop and PiDeck use Electron, and Pi Web runs in a browser; they are compared at pi-gpui.dev/compare. awesome-pi-agent lists more, including Tauri apps and editor plugins."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is there a desktop app for pi on Linux?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. Pi GPUI runs on Linux on x86_64 and arm64, on X11 and Wayland, and one command installs it into ~/.local without root: curl -fsSL https://pi-gpui.dev/install.sh | sh. The Linux app is in beta: so far it was only tested on Ubuntu 24.04 on arm64 in a VM. pi-gui, PI-Desktop, Pi Desktop, PiDeck and Orbit have Linux builds too."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "How is Pi GPUI different from pi-gui?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "pi-gui is an Electron app with parallel threads, optional git worktrees, a review tab and a built-in terminal, and it also has Windows builds. Pi GPUI is a native Rust app built around pi's session tree and forks; it has no terminal or worktrees. On 8 November 2026, with no projects open, Pi GPUI 0.1.11 was a 7.3 MB download and used 74 MB of memory at idle; pi-gui 1.0.1 was 137 MB and 280 MB."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Does it work with my pi extensions?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, with one gap. Pi GPUI starts your own pi, so extensions, skills and prompt templates load as they do in the terminal. Questions from extensions (select, confirm, input, editor) appear in the chat. Extension status lines, widgets and window titles are not shown yet."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Can I use Claude models?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, if your pi is set up for them. Pi GPUI runs your pi with its models, extensions and skills."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it written in Rust?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. The app is Rust on GPUI, the UI framework behind the Zed editor, and renders with Metal on macOS and Vulkan on Linux. pi itself stays the agent engine; the app talks to it over JSON lines."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Do I need pi installed?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes, pi 1.4 or newer within pi 1.x. The app finds pi in PI_EXECUTABLE, PATH or your login shell, so nvm installs work. It never installs or updates pi on its own."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Which systems does it run on?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Macs with Apple silicon on macOS 13 or newer, and Linux on x86_64 and arm64 (beta; X11 and Wayland, glibc 2.35 or newer, a Vulkan driver). The app updates itself from GitHub releases. Windows is not supported."
+      }
+    },
+    {
+      "@type": "Question",
+      "name": "Is it free?",
+      "acceptedAnswer": {
+        "@type": "Answer",
+        "text": "Yes. It is free and open source under the MIT license, with the source on GitHub."
+      }
+    }
   ]
 }
 </script>
@@ -92,6 +158,7 @@
     <a href="#tour">Tour</a>
     <a href="#doom">DOOM</a>
     <a href="#faq">FAQ</a>
+    <a href="/compare/">Compare</a>
     <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
   </nav>
   <a class="btn btn-small" data-download href="https://github.com/bytesbay/pi-gpui/releases/latest">Download</a>
@@ -285,11 +352,23 @@ models · tools · extensions · your files</pre>
     </details>
     <details>
       <summary>Is there a GUI for pi?</summary>
-      <p>Yes. Pi GPUI is a free native GUI for pi on macOS and Linux, written in Rust with GPUI, without Electron or a webview. Web, Electron, Tauri and editor options also exist, and <a href="https://github.com/thevibeworks/awesome-pi-agent#frontends" rel="noopener">awesome-pi-agent</a> lists them.</p>
+      <p>Yes, several. Pi GPUI is a free native GUI for the pi coding agent on macOS and Linux, written in Rust with GPUI, without Electron or a webview. Orbit is native too, pi-gui, PI-Desktop, Pi Desktop and PiDeck use Electron, and Pi Web runs in a browser; they are <a href="/compare/">compared here</a>. <a href="https://github.com/thevibeworks/awesome-pi-agent#frontends" rel="noopener">awesome-pi-agent</a> lists more, including Tauri apps and editor plugins.</p>
+    </details>
+    <details>
+      <summary>Is there a desktop app for pi on Linux?</summary>
+      <p>Yes. Pi GPUI runs on Linux on x86_64 and arm64, on X11 and Wayland, and one command installs it into <code>~/.local</code> without root: <code>curl -fsSL https://pi-gpui.dev/install.sh | sh</code>. The Linux app is in beta: so far it was only tested on Ubuntu 24.04 on arm64 in a VM. pi-gui, PI-Desktop, Pi Desktop, PiDeck and Orbit have Linux builds too; see the <a href="/compare/">comparison</a>.</p>
+    </details>
+    <details>
+      <summary>How is Pi GPUI different from pi-gui?</summary>
+      <p>pi-gui is an Electron app with parallel threads, optional git worktrees, a review tab and a built-in terminal, and it also has Windows builds. Pi GPUI is a native Rust app built around pi's session tree and forks; it has no terminal or worktrees. On 8 November 2026, with no projects open, Pi GPUI 0.1.11 was a 7.3 MB download and used 74 MB of memory at idle; pi-gui 1.0.1 was 137 MB and 280 MB (<a href="https://github.com/bytesbay/pi-gpui/blob/main/docs/BENCHMARKS.md" rel="noopener">how we measured</a>). More in the <a href="/compare/">comparison</a>.</p>
+    </details>
+    <details>
+      <summary>Does it work with my pi extensions?</summary>
+      <p>Yes, with one gap. Pi GPUI starts your own pi, so extensions, skills and prompt templates load as they do in the terminal. Questions from extensions (select, confirm, input, editor) appear in the chat. Extension status lines, widgets and window titles are not shown yet.</p>
     </details>
     <details>
       <summary>Can I use Claude models?</summary>
-      <p>Yes, if your pi is set up for them. pi works with Claude and other providers, and Pi GPUI runs your pi with its models, extensions and skills as they are.</p>
+      <p>Yes, if your pi is set up for them. pi works with Claude and other providers, and Pi GPUI runs your pi with its models, extensions and skills.</p>
     </details>
     <details>
       <summary>Is it written in Rust?</summary>
@@ -329,6 +408,7 @@ models · tools · extensions · your files</pre>
     <a href="https://github.com/bytesbay/pi-gpui" rel="noopener">GitHub</a>
     <a href="https://github.com/bytesbay/pi-gpui/releases" rel="noopener">Releases</a>
     <a href="https://github.com/bytesbay/pi-gpui/issues" rel="noopener">Issues</a>
+    <a href="/compare/">Compare</a>
   </span>
 </footer>
 
