@@ -233,13 +233,22 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
-/// pi is usually a `#!/usr/bin/env node` script, so the directory holding the
-/// executable (where nvm also puts `node`) has to be on PATH for the child.
+/// pi is usually a `#!/usr/bin/env node` script. Prepend the executable's
+/// directory and, when found, the directory holding `node` (often from mise,
+/// nvm, or fnm on the login-shell PATH, not next to pi).
 pub fn path_with_executable_dir(executable: &Path) -> OsString {
     let mut directories: Vec<PathBuf> = executable
         .parent()
         .map(|directory| vec![directory.to_path_buf()])
         .unwrap_or_default();
+    if let Some(node) = find_executable("node")
+        && let Some(node_dir) = node.parent()
+    {
+        let node_dir = node_dir.to_path_buf();
+        if !directories.iter().any(|directory| directory == &node_dir) {
+            directories.push(node_dir);
+        }
+    }
     if let Some(path) = std::env::var_os("PATH") {
         directories.extend(std::env::split_paths(&path));
     }
@@ -433,5 +442,19 @@ mod tests {
             })
         );
         assert_eq!(Version::find_in("no version"), None);
+    }
+
+    #[test]
+    fn path_with_executable_dir_includes_discovered_node_directory() {
+        let Some(node) = find_executable("node") else {
+            return;
+        };
+        let node_dir = node.parent().expect("node has a parent directory");
+        let path = path_with_executable_dir(Path::new("/tmp/fake-pi-for-path-test"));
+        let directories: Vec<_> = std::env::split_paths(&path).collect();
+        assert!(
+            directories.iter().any(|directory| directory == node_dir),
+            "PATH should include the parent of a discoverable node; got {path:?}"
+        );
     }
 }
