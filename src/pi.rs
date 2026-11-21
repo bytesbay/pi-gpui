@@ -2,11 +2,12 @@
 //!
 //! Everything here blocks; call it from a background task.
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::fmt;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::RwLock;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,12 @@ use futures::channel::mpsc;
 use crate::jsonl::{JsonlMessage, JsonlProcess};
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Where `node` lives when it is not next to pi (mise, fnm, or pi's own
+/// installer with the user's node). Looking it up can need a login shell, so
+/// `check_installation` does that in the background and spawning pi only
+/// reads the answer.
+static NODE_DIRECTORY: RwLock<Option<PathBuf>> = RwLock::new(None);
 
 /// Field order makes the derived ordering compare major, then minor, then patch.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -155,6 +162,7 @@ impl fmt::Display for CheckError {
 /// Finds pi, reads its version and checks that the app supports it.
 pub fn check_installation() -> Result<Installation, CheckError> {
     let executable = discover().ok_or(CheckError::NotFound)?;
+    remember_node_directory(&executable);
     let output = run_with_timeout(
         Command::new(&executable)
             .arg("--version")
@@ -233,15 +241,58 @@ pub fn find_executable(name: &str) -> Option<PathBuf> {
         .filter(|path| path.is_file())
 }
 
-/// pi is usually a `#!/usr/bin/env node` script, so the directory holding the
-/// executable (where nvm also puts `node`) has to be on PATH for the child.
+/// Finds `node` for a pi that has none next to it and keeps its directory for
+/// `path_with_executable_dir`. Every check looks again, so "Check again" picks
+/// up a node installed or switched since. Blocking.
+fn remember_node_directory(executable: &Path) {
+    let beside_pi = executable
+        .parent()
+        .is_some_and(|directory| directory.join("node").is_file());
+    let directory = if beside_pi {
+        None
+    } else {
+        find_executable("node").and_then(|node| node.parent().map(Path::to_path_buf))
+    };
+    if let Ok(mut remembered) = NODE_DIRECTORY.write() {
+        *remembered = directory;
+    }
+}
+
+/// pi is usually a `#!/usr/bin/env node` script, so the child needs `node` on
+/// PATH: the executable's directory comes first (nvm puts `node` there), and
+/// a node found elsewhere by the last check goes last. Does not block.
 pub fn path_with_executable_dir(executable: &Path) -> OsString {
+    let node_directory = NODE_DIRECTORY
+        .read()
+        .ok()
+        .and_then(|remembered| remembered.clone());
+    child_path(
+        executable,
+        std::env::var_os("PATH").as_deref(),
+        node_directory.as_deref(),
+    )
+}
+
+/// `node_directory` goes after the inherited PATH: it only fills the gap when
+/// nothing else provides `node` and never changes which tools win.
+fn child_path(
+    executable: &Path,
+    inherited: Option<&OsStr>,
+    node_directory: Option<&Path>,
+) -> OsString {
     let mut directories: Vec<PathBuf> = executable
         .parent()
         .map(|directory| vec![directory.to_path_buf()])
         .unwrap_or_default();
-    if let Some(path) = std::env::var_os("PATH") {
-        directories.extend(std::env::split_paths(&path));
+    if let Some(path) = inherited {
+        directories.extend(std::env::split_paths(path));
+    }
+    if let Some(node_directory) = node_directory
+        && !directories
+            .iter()
+            .any(|directory| directory == node_directory)
+    {
+        directories.push(node_directory.to_path_buf());
     }
     std::env::join_paths(directories).unwrap_or_default()
 }
@@ -433,5 +484,31 @@ mod tests {
             })
         );
         assert_eq!(Version::find_in("no version"), None);
+    }
+
+    #[test]
+    fn node_directory_goes_after_the_inherited_path() {
+        let path = child_path(
+            Path::new("/pi/bin/pi"),
+            Some(OsStr::new("/usr/bin:/bin")),
+            Some(Path::new("/mise/node/bin")),
+        );
+        assert_eq!(path, OsString::from("/pi/bin:/usr/bin:/bin:/mise/node/bin"));
+    }
+
+    #[test]
+    fn node_directory_already_on_the_path_keeps_its_place() {
+        let path = child_path(
+            Path::new("/pi/bin/pi"),
+            Some(OsStr::new("/pyenv/shims:/usr/bin")),
+            Some(Path::new("/usr/bin")),
+        );
+        assert_eq!(path, OsString::from("/pi/bin:/pyenv/shims:/usr/bin"));
+    }
+
+    #[test]
+    fn path_without_a_remembered_node_is_unchanged() {
+        let path = child_path(Path::new("/pi/bin/pi"), Some(OsStr::new("/usr/bin")), None);
+        assert_eq!(path, OsString::from("/pi/bin:/usr/bin"));
     }
 }
