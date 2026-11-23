@@ -33,6 +33,7 @@ use crate::markdown::{self, Node};
 use crate::pi::{self, Installation};
 use crate::plugins::{self, CommandContext, PluginEvent, PluginRegistry};
 use crate::selectable::{SelectableText, TextSelection};
+use crate::session_links::{self, KnownProjects, LinkSpec, LinkState, SessionLinkRule};
 use crate::sessions;
 use crate::text_input::{self, TextInput};
 use crate::ui::AnimationTicker;
@@ -238,6 +239,9 @@ pub enum ChatEvent {
     Settled,
     /// `/new`: start a new session in the same project.
     NewSession,
+    /// A session link in a tool call was clicked; `workspace` is a project
+    /// in the sidebar.
+    OpenSession { workspace: PathBuf, file: PathBuf },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -327,6 +331,8 @@ enum Row {
         view: Option<SharedString>,
         /// Everything the tool printed, for the log viewer.
         log: ToolLog,
+        /// Other pi sessions this call points to (see `session_links`).
+        links: Vec<LinkSpec>,
     },
     Notice {
         tone: Tone,
@@ -431,6 +437,10 @@ pub struct ChatView {
     _composer_subscription: Subscription,
     plugins: Entity<PluginRegistry>,
     _plugins_subscription: Subscription,
+    /// What each linked session file turned out to be (see `session_links`).
+    link_states: HashMap<PathBuf, LinkState>,
+    /// Links can open once their project is added to the sidebar.
+    _projects_subscription: Subscription,
     _details_subscription: Subscription,
     /// Fonts and the theme change row heights and colors: re-measure.
     _appearance_subscriptions: [Subscription; 2],
@@ -567,6 +577,8 @@ impl ChatView {
             _composer_subscription: composer_subscription,
             plugins,
             _plugins_subscription: plugins_subscription,
+            link_states: HashMap::new(),
+            _projects_subscription: cx.observe_global::<KnownProjects>(|_, cx| cx.notify()),
             _details_subscription: details_subscription,
             _appearance_subscriptions: appearance_subscriptions,
             markdown_cache: HashMap::new(),
@@ -637,6 +649,167 @@ impl ChatView {
             self.apply_reveal();
         }
         cx.notify();
+    }
+
+    /// Starts reading the header of every linked session file not seen yet.
+    fn inspect_new_links(&mut self, cx: &mut Context<Self>) {
+        let new: Vec<PathBuf> = self
+            .rows
+            .iter()
+            .filter_map(|row| match row {
+                Row::Tool { links, .. } => Some(links),
+                _ => None,
+            })
+            .flatten()
+            .map(|link| link.file.clone())
+            .filter(|file| !self.link_states.contains_key(file))
+            .collect();
+        for file in new {
+            self.link_states.insert(file.clone(), LinkState::Checking);
+            let inspect = cx.background_spawn({
+                let file = file.clone();
+                async move { session_links::inspect(&file) }
+            });
+            cx.spawn(async move |this, cx| {
+                let state = inspect.await;
+                this.update(cx, |this, cx| {
+                    this.link_states.insert(file, state);
+                    cx.notify();
+                })
+                .ok();
+            })
+            .detach();
+        }
+    }
+
+    /// The session links of a tool row: a button per link, or the reason it
+    /// can't open.
+    fn render_session_links(
+        &self,
+        index: usize,
+        links: &[LinkSpec],
+        cx: &mut Context<Self>,
+    ) -> Option<AnyElement> {
+        if links.is_empty() {
+            return None;
+        }
+        let colors = cx.theme().colors.clone();
+        let projects = cx.try_global::<KnownProjects>();
+        let items = links.iter().enumerate().map(|(position, link)| {
+            let state = self.link_states.get(&link.file).cloned().unwrap_or(LinkState::Checking);
+            let shown = sessions::display_path(&link.file);
+            // (label, sidebar project, short reason, tooltip)
+            let (title, target, reason, tooltip_text) = match state {
+                LinkState::Checking => (
+                    link.label.clone().unwrap_or(shown.clone()),
+                    None,
+                    None,
+                    format!("Checking {shown}"),
+                ),
+                LinkState::Unavailable { short, long } => (
+                    link.label.clone().unwrap_or(shown.clone()),
+                    None,
+                    Some(short),
+                    long,
+                ),
+                LinkState::Session { workspace, title } => {
+                    let label = link.label.as_ref().map_or(title.clone(), |label| {
+                        if title.is_empty() {
+                            label.clone()
+                        } else {
+                            format!("{label}: {title}")
+                        }
+                    });
+                    match projects.and_then(|projects| projects.find(&workspace)) {
+                        Some(project) => (label, Some(project.clone()), None, format!("Open {shown}")),
+                        None => {
+                            let name = workspace
+                                .file_name()
+                                .map(|name| name.to_string_lossy().into_owned())
+                                .unwrap_or_else(|| sessions::display_path(&workspace));
+                            (
+                                label,
+                                None,
+                                Some(format!("project {name} isn't in the sidebar")),
+                                format!(
+                                    "This session belongs to {}. Add that project to the sidebar to open it here.",
+                                    sessions::display_path(&workspace)
+                                ),
+                            )
+                        }
+                    }
+                }
+            };
+            let is_current = self.session_file.as_deref() == Some(link.file.as_path());
+            let openable = target.is_some() && !is_current;
+            let tooltip_text = if is_current {
+                "This is the session you're in".to_string()
+            } else {
+                tooltip_text
+            };
+            let file = link.file.clone();
+            h_flex()
+                .gap(px(8.))
+                .min_w(px(0.))
+                .child(
+                    h_flex()
+                        .id(ElementId::Name(format!("session-link:{index}:{position}").into()))
+                        .flex_none()
+                        .max_w(px(360.))
+                        .gap(px(5.))
+                        .h(px(22.))
+                        .px(px(7.))
+                        .rounded(px(5.))
+                        .border_1()
+                        .border_color(colors.border_variant)
+                        .when(openable, |this| {
+                            this.cursor_pointer()
+                                .bg(colors.element_background)
+                                .hover(|style| style.bg(colors.element_hover))
+                                .on_click(cx.listener(move |_, _, _, cx| {
+                                    if let Some(workspace) = target.clone() {
+                                        cx.emit(ChatEvent::OpenSession {
+                                            workspace,
+                                            file: file.clone(),
+                                        });
+                                    }
+                                }))
+                        })
+                        .when(!openable, |this| this.opacity(0.6))
+                        .tooltip(Tooltip::text(tooltip_text))
+                        .child(
+                            Icon::new(IconName::Message)
+                                .size(IconSize::XSmall)
+                                .color(if openable { Color::Accent } else { Color::Muted }),
+                        )
+                        .child(
+                            Label::new(title)
+                                .size(LabelSize::XSmall)
+                                .color(if openable { Color::Default } else { Color::Muted })
+                                .truncate(),
+                        ),
+                )
+                .when_some(reason, |this, reason| {
+                    this.child(
+                        div().flex_1().min_w(px(0.)).child(
+                            Label::new(reason)
+                                .size(LabelSize::XSmall)
+                                .color(Color::Placeholder)
+                                .truncate(),
+                        ),
+                    )
+                })
+        });
+        Some(
+            v_flex()
+                .gap(px(4.))
+                .px(px(8.))
+                .py(px(6.))
+                .border_t_1()
+                .border_color(colors.border_variant)
+                .children(items)
+                .into_any_element(),
+        )
     }
 
     fn apply_reveal(&mut self) {
@@ -887,6 +1060,7 @@ impl ChatView {
                 } => self.on_process_exited(status, stderr_tail, &mut changed, cx),
             }
         }
+        self.inspect_new_links(cx);
         if std::mem::take(&mut self.needs_list_reset) {
             self.list_state.reset(self.rows.len());
             self.apply_reveal();
@@ -969,6 +1143,12 @@ impl ChatView {
                         started: Some(Instant::now()),
                         ..ToolLog::default()
                     },
+                    links: session_links::collect(
+                        self.plugins.read(cx).session_link_rules(),
+                        record["toolName"].as_str().unwrap_or_default(),
+                        &record["args"],
+                        &Value::Null,
+                    ),
                 });
                 if let Some(call_id) = record["toolCallId"].as_str() {
                     self.tool_rows
@@ -994,6 +1174,7 @@ impl ChatView {
                 let index = record["toolCallId"]
                     .as_str()
                     .and_then(|call_id| self.tool_rows.get(call_id).copied());
+                let rules = self.plugins.read(cx).session_link_rules().to_vec();
                 if let Some(index) = index
                     && let Some(Row::Tool {
                         name,
@@ -1001,9 +1182,17 @@ impl ChatView {
                         output,
                         images,
                         log,
+                        links,
                         ..
                     }) = self.rows.get_mut(index)
                 {
+                    for link in
+                        session_links::collect(&rules, name, &record["args"], &result["details"])
+                    {
+                        if !links.contains(&link) {
+                            links.push(link);
+                        }
+                    }
                     let text = content_text(result);
                     // Live output shows its newest lines; a finished bash
                     // too, since the end (errors, exit code) matters most.
@@ -1162,7 +1351,8 @@ impl ChatView {
                     .map(Vec::as_slice)
                     .unwrap_or_default();
                 // Notices that arrived during startup stay after the history.
-                let mut rows = history_rows(messages);
+                let rules = self.plugins.read(cx).session_link_rules().to_vec();
+                let mut rows = history_rows(messages, &rules);
                 rows.append(&mut self.rows);
                 self.rows = rows;
                 self.needs_list_reset = true;
@@ -2393,7 +2583,9 @@ impl ChatView {
                 expanded,
                 view,
                 log,
+                links,
             } => {
+                let session_links = self.render_session_links(index, links, cx);
                 let plugin_view = view
                     .as_ref()
                     .map(|call_id| self.render_plugin_view(call_id, name, cx));
@@ -2505,6 +2697,7 @@ impl ChatView {
                                 }),
                         )
                     })
+                    .children(session_links)
                     .children(plugin_prompt)
                     .children(plugin_view)
                     .into_any_element()
@@ -3405,7 +3598,7 @@ fn format_time(at: i64, full: bool) -> String {
 /// Rebuilds rows from `get_messages`. Tool calls come from the assistant's
 /// `toolCall` blocks and are completed by the matching `toolResult` message,
 /// the same shape the live stream produces from `tool_execution_*` events.
-fn history_rows(messages: &[Value]) -> Vec<Row> {
+fn history_rows(messages: &[Value], link_rules: &[SessionLinkRule]) -> Vec<Row> {
     let mut rows = Vec::new();
     let mut tool_rows = HashMap::new();
     for message in messages {
@@ -3436,8 +3629,15 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                     if block["type"] != "toolCall" {
                         continue;
                     }
+                    let name = block["name"].as_str().unwrap_or("tool").to_string();
                     rows.push(Row::Tool {
-                        name: block["name"].as_str().unwrap_or("tool").to_string(),
+                        links: session_links::collect(
+                            link_rules,
+                            &name,
+                            &block["arguments"],
+                            &Value::Null,
+                        ),
+                        name,
                         detail: tool_detail(&block["arguments"]),
                         status: ToolStatus::Running,
                         output: String::new(),
@@ -3462,9 +3662,17 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                         output,
                         images,
                         log,
+                        links,
                         ..
                     }) = rows.get_mut(index)
                 {
+                    for link in
+                        session_links::collect(link_rules, name, &Value::Null, &message["details"])
+                    {
+                        if !links.contains(&link) {
+                            links.push(link);
+                        }
+                    }
                     let text = content_text(message);
                     *output = if is_shell(name) {
                         tail_lines(&text)
@@ -3502,6 +3710,7 @@ fn history_rows(messages: &[Value]) -> Vec<Row> {
                         file: message["fullOutputPath"].as_str().map(PathBuf::from),
                         ..ToolLog::default()
                     },
+                    links: Vec::new(),
                 })
             }
             "compactionSummary" => rows.push(Row::Summary {
@@ -3885,7 +4094,7 @@ mod tests {
                     "content": [{ "type": "text", "text": "src" }] }),
             json!({ "role": "assistant", "stopReason": "stop", "content": [{ "type": "text", "text": "done" }] }),
         ];
-        let rows = history_rows(&messages);
+        let rows = history_rows(&messages, &[]);
         assert_eq!(rows.len(), 5);
         assert!(matches!(&rows[0], Row::User { text, .. } if text.as_ref() == "list files"));
         assert!(

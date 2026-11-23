@@ -16,6 +16,7 @@ mod pi_updates;
 mod platform;
 mod plugins;
 mod selectable;
+mod session_links;
 mod session_search;
 mod sessions;
 mod settings;

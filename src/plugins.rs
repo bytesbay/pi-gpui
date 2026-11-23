@@ -205,6 +205,8 @@ pub struct PluginRegistry {
     /// Tools whose calls a plugin follows (`contributes.toolEvents`): plugin
     /// id and tool name.
     tool_events: Vec<(SharedString, SharedString)>,
+    /// Fields of tool calls that name session files (`contributes.sessionLinks`).
+    session_link_rules: Vec<crate::session_links::SessionLinkRule>,
     /// Open prompts (`prompt.input`, `prompt.form`), oldest first.
     prompts: Vec<PluginPrompt>,
     /// pi extensions plugins ship (`contributes.piExtensions`), loaded into
@@ -249,6 +251,7 @@ impl PluginRegistry {
             statuses: Vec::new(),
             tool_views: Vec::new(),
             tool_events: Vec::new(),
+            session_link_rules: Vec::new(),
             prompts: Vec::new(),
             pi_extensions: Vec::new(),
             session_subscriptions: Vec::new(),
@@ -313,6 +316,7 @@ impl PluginRegistry {
                     .map(|tool| (parsed.id.clone(), tool)),
             );
             self.pi_extensions.extend(parsed.pi_extensions);
+            self.session_link_rules.extend(parsed.session_links);
             self.settings.extend(parsed.settings);
             self.plugins.push(Plugin {
                 id: parsed.id,
@@ -373,6 +377,10 @@ impl PluginRegistry {
 
     pub fn has_busy_status(&self) -> bool {
         self.statuses.iter().any(|status| status.busy)
+    }
+
+    pub fn session_link_rules(&self) -> &[crate::session_links::SessionLinkRule] {
+        &self.session_link_rules
     }
 
     pub fn tool_view(&self, tool: &str) -> Option<&ToolView> {
@@ -1227,6 +1235,7 @@ struct ParsedManifest {
     tool_views: Vec<ToolView>,
     tool_events: Vec<SharedString>,
     pi_extensions: Vec<PathBuf>,
+    session_links: Vec<crate::session_links::SessionLinkRule>,
     startup: bool,
     sessions: bool,
     app: bool,
@@ -1259,9 +1268,6 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         .flatten()
         .filter_map(|part| part.as_str().map(str::to_string))
         .collect();
-    if run.is_empty() {
-        return Err("run: a program to start is required".to_string());
-    }
 
     let id = SharedString::from(id.to_string());
     let mut commands = Vec::new();
@@ -1319,7 +1325,7 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
             aspect: (height / width) as f32,
         });
     }
-    let tool_events = manifest["contributes"]["toolEvents"]
+    let tool_events: Vec<SharedString> = manifest["contributes"]["toolEvents"]
         .as_array()
         .into_iter()
         .flatten()
@@ -1341,6 +1347,29 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         pi_extensions.push(path);
     }
 
+    let mut session_links = Vec::new();
+    for link in manifest["contributes"]["sessionLinks"]
+        .as_array()
+        .into_iter()
+        .flatten()
+    {
+        let tool = link["tool"].as_str().filter(|tool| !tool.is_empty());
+        let field = link["field"]
+            .as_str()
+            .filter(|field| field.starts_with("args.") || field.starts_with("details."));
+        let (Some(tool), Some(field)) = (tool, field) else {
+            return Err(
+                "sessionLinks: each link needs a \"tool\" and a \"field\" starting with \"args.\" or \"details.\""
+                    .to_string(),
+            );
+        };
+        session_links.push(crate::session_links::SessionLinkRule {
+            tool: SharedString::from(tool.to_string()),
+            field: field.to_string(),
+            label: link["label"].as_str().map(str::to_string),
+        });
+    }
+
     let startup = match manifest["activation"].as_str() {
         None | Some("lazy") => false,
         Some("startup") => true,
@@ -1353,6 +1382,17 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
     };
     let sessions = permitted("sessions");
     let app = permitted("app");
+    // A plugin that only declares data (session links, settings) needs no program.
+    if run.is_empty()
+        && (!commands.is_empty()
+            || !tool_views.is_empty()
+            || !tool_events.is_empty()
+            || startup
+            || sessions
+            || app)
+    {
+        return Err("run: a program to start is required".to_string());
+    }
     let settings = settings::parse(&manifest, &id)?;
 
     Ok(ParsedManifest {
@@ -1367,6 +1407,7 @@ fn parse_manifest(directory: &Path) -> Result<ParsedManifest, String> {
         tool_views,
         tool_events,
         pi_extensions,
+        session_links,
     })
 }
 

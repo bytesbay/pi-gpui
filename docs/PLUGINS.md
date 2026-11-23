@@ -47,7 +47,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 ```
 
 - `protocol`: the plugin protocol version (currently `1`). A plugin for another protocol is not loaded. The protocol changes only when messages change incompatibly, not with every app release.
-- `run`: the program and its arguments. A path starting with `./` is relative to the plugin folder. Other names are looked up in `PATH` and in the user's login shell, so `["node", "index.js"]` finds Node installed through nvm.
+- `run`: the program and its arguments. A path starting with `./` is relative to the plugin folder. Other names are looked up in `PATH` and in the user's login shell, so `["node", "index.js"]` finds Node installed through nvm. A plugin that only declares data (session links, settings, pi extensions) can leave it out.
 - `contributes.commands`: commands. The app shows them **before the plugin starts**; the process starts on first use.
   - `id`: must start with the plugin id and a dot.
   - `placement`: where to show a button. `composer` (the message field) is supported today.
@@ -56,6 +56,7 @@ Later, plugins will be installable as pi packages (`pi install`): a plugin folde
 - `contributes.piExtensions`: pi extension files (relative to the plugin folder) that the app loads into every pi it starts, for example a tool the agent can call.
 - `contributes.toolEvents`: pi tool names whose calls the plugin follows. When pi starts one, the app sends `tool.start` (starting the plugin if needed), for example to ask the user something in that call with `prompt.input`.
 - `contributes.toolViews`: live views the plugin draws inside tool call rows. `tool` is the pi tool name, `width` and `height` the frame size (the view keeps that aspect ratio), `title` a name for placeholders.
+- `contributes.sessionLinks`: where calls of a pi tool name other sessions, so the transcript can open them (see Session links).
 - `contributes.settings`: settings shown on the Settings page under the plugin's name (see Settings).
 - `activation`: `lazy` (default) starts the plugin on first use; `startup` starts it with the app, for plugins that serve something (a local server, a bridge).
 - `permissions`: `"sessions"` lets the plugin list, open and drive pi sessions and follow their events (see Sessions); `"app"` lets it check for updates and restart the app (see App). Without them `sessions.*` and `app.*` requests fail.
@@ -117,6 +118,33 @@ The answer has one entry per question, in the order they were asked:
 Sending `prompt.form` again with the same `id` and other questions starts the form over. Forms close the same way as text prompts.
 
 The [Ask plugin](../examples/plugins/ask) is a complete example: a pi tool `ask_user_question` that takes several questions and returns the answers to the agent.
+
+### Session links
+
+A tool call can point to other pi sessions, for example the sessions of the subagents it started. The app shows a button for each one under the call, and a click opens that session in a tab. The button works only when the file exists, is a pi session, and its project is in the sidebar. Otherwise it is greyed out with the reason next to it (`file not found`, `not a pi session`, `project … isn't in the sidebar`) and in its tooltip.
+
+A pi extension names the sessions in its tool result:
+
+```ts
+return {
+  content: [{ type: "text", text: "Reviewer finished" }],
+  details: { piGpui: { sessionLinks: [{ file: reviewerSessionFile, label: "Reviewer" }] } },
+};
+```
+
+`sessionLinks` holds session file paths (absolute, or starting with `~/`) or `{file, label?}` objects. The button shows the label, then the session's title.
+
+For a tool whose code you don't control, a plugin can say where its calls keep session files:
+
+```json
+"contributes": {
+  "sessionLinks": [
+    { "tool": "subagent", "field": "details.results.sessionFile", "label": "Subagent" }
+  ]
+}
+```
+
+`field` starts with `args.` (the call's arguments) or `details.` (its result's `details`) and walks through arrays, so `details.results.sessionFile` takes `sessionFile` from every item of `results`. Both ways work for calls in a running session and in history.
 
 ### Settings
 

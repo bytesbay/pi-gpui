@@ -59,6 +59,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 - Search every session of every project (`⌘⇧F`), like Zed's project search: plain text or a regular expression, match case and whole words. Matching lines are grouped by session; `↩` or a click opens the session at that line. Your messages and pi's answers are searched, tool output is not.
 - Paste or drop files and images into the message field. They show up as chips in the text (hover an image to preview it) and are sent as paths, like in pi's terminal: a pasted image is saved to `$TMPDIR/pi-clipboard-*.png`, a file gets a temporary link. Images in messages and tool results are shown in the transcript.
 - Fork from any message.
+- A tool call that points to other pi sessions (a subagent's, for example) gets a button that opens them, if their project is in the sidebar; see [session links](docs/PLUGINS.md#session-links).
 - Extension questions (`select`, `confirm`, `input`, `editor`) are asked inline in the transcript: pick with a click, digits or arrows, or type your own answer.
 - Plugins in any language: buttons, keybindings and status, tools for pi, and live views inside tool calls. [It runs DOOM](examples/plugins/doom). See [docs/PLUGINS.md](docs/PLUGINS.md).
 - Per-session model and thinking level, without touching pi's defaults.

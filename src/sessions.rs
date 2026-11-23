@@ -155,6 +155,11 @@ fn read_title(path: &Path, workspace: &Path) -> Option<String> {
     ))
 }
 
+/// The sidebar title of a session file whose header `cwd` is `workspace`.
+pub fn session_title(path: &Path, workspace: &Path) -> Option<String> {
+    read_title(path, workspace)
+}
+
 /// Who else holds `session` open, according to pi-gui's lease convention.
 /// pi itself does not prevent two writers, so this is the only signal we get.
 pub fn foreign_lease_holder(session: &Path) -> Option<String> {

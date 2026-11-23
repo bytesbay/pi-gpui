@@ -563,6 +563,7 @@ impl HubView {
             this.pending_open = Some((path, None));
             this.save(cx);
         }
+        this.publish_projects(cx);
         let expanded: Vec<PathBuf> = this
             .workspaces
             .iter()
@@ -1588,6 +1589,10 @@ impl HubView {
                 self.report_session_state(&chat, cx);
                 cx.notify();
             }
+            ChatEvent::OpenSession { workspace, file } => {
+                let (workspace, file) = (workspace.clone(), file.clone());
+                self.open_session(&workspace, file, cx);
+            }
             ChatEvent::NewSession => {
                 let workspace = chat.read(cx).workspace().to_path_buf();
                 self.start_chat(&workspace, None, cx);
@@ -1607,7 +1612,23 @@ impl HubView {
         }
     }
 
+    /// Tells session links in the transcripts which projects are in the sidebar.
+    fn publish_projects(&self, cx: &mut Context<Self>) {
+        let projects: Vec<PathBuf> = self
+            .workspaces
+            .iter()
+            .map(|entry| entry.path.clone())
+            .collect();
+        if cx
+            .try_global::<crate::session_links::KnownProjects>()
+            .is_none_or(|known| known.0 != projects)
+        {
+            cx.set_global(crate::session_links::KnownProjects(projects));
+        }
+    }
+
     fn save(&mut self, cx: &mut Context<Self>) {
+        self.publish_projects(cx);
         let Some(state_path) = self.state_path.clone() else {
             return;
         };
