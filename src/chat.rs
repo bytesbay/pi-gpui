@@ -376,6 +376,13 @@ pub struct ChatView {
     pending_prompt: bool,
     /// Set when rows were replaced wholesale; the list must be reset, not spliced.
     needs_list_reset: bool,
+    /// The history from `get_messages` is in `rows`.
+    history_loaded: bool,
+    /// A line from session search to scroll to once the history is shown.
+    reveal: Option<String>,
+    /// After scrolling to the message: move this far into it (share of its
+    /// height) once it has been laid out, so the line itself is in view.
+    reveal_within: Option<(usize, f32)>,
     model: Option<ModelInfo>,
     thinking_level: Option<String>,
     thinking_levels: Vec<SharedString>,
@@ -538,6 +545,9 @@ impl ChatView {
             _usage_tick: Task::ready(()),
             pending_prompt: false,
             needs_list_reset: false,
+            history_loaded: false,
+            reveal: None,
+            reveal_within: None,
             model: None,
             thinking_level: None,
             thinking_levels: Vec::new(),
@@ -616,6 +626,39 @@ impl ChatView {
 
     pub fn workspace(&self) -> &Path {
         &self.workspace
+    }
+
+    /// Scrolls to the newest message containing `line` (from session
+    /// search), now or once the history has loaded. A line on another branch
+    /// of the tree is not in the transcript; then nothing moves.
+    pub fn reveal_line(&mut self, line: String, cx: &mut Context<Self>) {
+        self.reveal = Some(line);
+        if self.history_loaded || self.session_file.is_none() {
+            self.apply_reveal();
+        }
+        cx.notify();
+    }
+
+    fn apply_reveal(&mut self) {
+        let Some(line) = self.reveal.take() else {
+            return;
+        };
+        let found = self.rows.iter().enumerate().rev().find_map(|(index, row)| {
+            let text: &str = match row {
+                Row::User { text, .. } => text,
+                Row::Assistant { text, .. } => text,
+                _ => return None,
+            };
+            let at = text.find(line.as_str())?;
+            Some((index, at as f32 / text.len().max(1) as f32))
+        });
+        if let Some((item_ix, share)) = found {
+            self.list_state.scroll_to(gpui::ListOffset {
+                item_ix,
+                offset_in_item: px(0.),
+            });
+            self.reveal_within = (share > 0.05).then_some((item_ix, share));
+        }
     }
 
     pub fn session_file(&self) -> Option<&Path> {
@@ -846,6 +889,7 @@ impl ChatView {
         }
         if std::mem::take(&mut self.needs_list_reset) {
             self.list_state.reset(self.rows.len());
+            self.apply_reveal();
         } else {
             self.sync_list(previous_len, changed);
         }
@@ -1122,6 +1166,7 @@ impl ChatView {
                 rows.append(&mut self.rows);
                 self.rows = rows;
                 self.needs_list_reset = true;
+                self.history_loaded = true;
                 self.request_stats();
             }
             "get_available_models" => {
@@ -3155,6 +3200,20 @@ impl Focusable for ChatView {
 
 impl Render for ChatView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if let Some((item_ix, share)) = self.reveal_within.take() {
+            let list = self.list_state.clone();
+            window.on_next_frame(move |window, _| {
+                if let Some(bounds) = list.bounds_for_item(item_ix) {
+                    let offset = (bounds.size.height * share - px(80.)).max(px(0.));
+                    list.scroll_to(gpui::ListOffset {
+                        item_ix,
+                        offset_in_item: offset,
+                    });
+                    window.refresh();
+                }
+            });
+            window.request_animation_frame();
+        }
         self.focus_pending_dialog(window, cx);
         self.focus_new_prompt(window, cx);
         self.sync_plugin_view_focus(window, cx);

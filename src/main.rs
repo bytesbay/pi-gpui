@@ -16,6 +16,7 @@ mod pi_updates;
 mod platform;
 mod plugins;
 mod selectable;
+mod session_search;
 mod sessions;
 mod settings;
 #[cfg(not(target_os = "macos"))]
@@ -241,6 +242,8 @@ fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Close Session", hub::CloseChat),
                 MenuItem::action("Reload All Sessions", hub::ReloadSessions),
                 MenuItem::action("Add Project…", hub::AddWorkspace),
+                MenuItem::separator(),
+                MenuItem::action("Search Sessions…", hub::SearchSessions),
             ],
         },
         Menu {

@@ -268,12 +268,12 @@ fn xdg_directory(variable: &str, fallback: &str) -> Option<PathBuf> {
         .or_else(|| Some(home_directory()?.join(fallback)))
 }
 
-fn same_directory(cwd: &str, workspace: &Path) -> bool {
+pub(crate) fn same_directory(cwd: &str, workspace: &Path) -> bool {
     let cwd = Path::new(cwd);
     cwd == workspace || cwd.canonicalize().is_ok_and(|cwd| cwd == workspace)
 }
 
-fn trim_line(line: &[u8]) -> &[u8] {
+pub(crate) fn trim_line(line: &[u8]) -> &[u8] {
     let mut end = line.len();
     while end > 0 && matches!(line[end - 1], b'\n' | b'\r') {
         end -= 1;
@@ -281,7 +281,7 @@ fn trim_line(line: &[u8]) -> &[u8] {
     &line[..end]
 }
 
-fn contains(haystack: &[u8], needle: &[u8]) -> bool {
+pub(crate) fn contains(haystack: &[u8], needle: &[u8]) -> bool {
     haystack
         .windows(needle.len())
         .any(|window| window == needle)

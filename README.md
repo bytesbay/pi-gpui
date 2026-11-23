@@ -56,6 +56,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 - Slash commands: pi's extension commands, prompt templates and skills, plus `/compact`, `/tree`, `/fork`, `/clone`, `/model`, `/new`, `/name`, `/session`, `/copy`, `/export`.
 - Side panels like Zed's docks: projects on the left; the project's files (colored by git status) and its git changes in a floating panel on the right. Right-click a panel's tab to move it to the other side; drag a panel's edge to resize it.
 - Session tree with keyboard navigation and branch summaries.
+- Search every session of every project (`⌘⇧F`), like Zed's project search: plain text or a regular expression, match case and whole words. Matching lines are grouped by session; `↩` or a click opens the session at that line. Your messages and pi's answers are searched, tool output is not.
 - Paste or drop files and images into the message field. They show up as chips in the text (hover an image to preview it) and are sent as paths, like in pi's terminal: a pasted image is saved to `$TMPDIR/pi-clipboard-*.png`, a file gets a temporary link. Images in messages and tool results are shown in the transcript.
 - Fork from any message.
 - Extension questions (`select`, `confirm`, `input`, `editor`) are asked inline in the transcript: pick with a click, digits or arrows, or type your own answer.
@@ -80,6 +81,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 | `⌘⇧R` | Reload all open sessions (fresh pi: picks up updated pi, extensions, skills and settings) |
 | `⌘B` / `⌘R` | Show or hide the left / right panel |
 | `⌘⇧T` | Session tree |
+| `⌘⇧F` | Search sessions (`⌥⌘C` match case, `⌥⌘W` whole words, `⌥⌘X` regex) |
 | `⌘⇧C` | Compact the context (also the button next to the context ring) |
 | `⌘⇧M` | Model and thinking level |
 | `⌘⇧E` | Expand or collapse step details |

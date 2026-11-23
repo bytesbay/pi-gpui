@@ -3583,6 +3583,7 @@ dependencies = [
  "objc",
  "pulldown-cmark",
  "raw-window-handle",
+ "regex",
  "serde_json",
  "syntect",
  "two-face",

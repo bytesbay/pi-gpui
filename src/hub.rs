@@ -50,9 +50,16 @@ actions!(
         ToggleRightDock,
         ToggleFiles,
         ToggleChanges,
-        ReloadSessions
+        ReloadSessions,
+        SearchSessions,
+        CloseSessionSearch,
+        ToggleSearchCase,
+        ToggleSearchWord,
+        ToggleSearchRegex
     ]
 );
+
+mod search;
 
 /// ⌘1…⌘9: the n-th open session tab (1-based).
 #[derive(Clone, PartialEq, Debug, gpui::Action)]
@@ -109,6 +116,27 @@ pub fn bind_keys(cx: &mut App) {
             &crate::keys::binding("cmd-shift-r"),
             ReloadSessions,
             Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("cmd-shift-f"),
+            SearchSessions,
+            Some(KEY_CONTEXT),
+        ),
+        KeyBinding::new("escape", CloseSessionSearch, Some(search::SEARCH_CONTEXT)),
+        KeyBinding::new(
+            &crate::keys::binding("alt-cmd-c"),
+            ToggleSearchCase,
+            Some(search::SEARCH_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("alt-cmd-w"),
+            ToggleSearchWord,
+            Some(search::SEARCH_CONTEXT),
+        ),
+        KeyBinding::new(
+            &crate::keys::binding("alt-cmd-x"),
+            ToggleSearchRegex,
+            Some(search::SEARCH_CONTEXT),
         ),
     ]);
     #[cfg(target_os = "macos")]
@@ -319,6 +347,12 @@ pub struct HubView {
     command_held: bool,
     /// The Settings page replaces the main area while open.
     settings_page: Option<SettingsPage>,
+    /// Session search (⌘⇧F); kept when hidden, so it comes back as it was.
+    search: Option<search::SearchPage>,
+    /// The search page replaces the main area.
+    search_open: bool,
+    /// A session opened from search: scroll to this line once it is shown.
+    pending_reveal: Option<(PathBuf, String)>,
     docks: Docks,
     diff_panel: Entity<DiffPanel>,
     files_panel: Entity<FilesPanel>,
@@ -480,6 +514,9 @@ impl HubView {
             renaming_sessions: HashSet::new(),
             command_held: false,
             settings_page: None,
+            search: None,
+            search_open: false,
+            pending_reveal: None,
             docks,
             diff_panel,
             files_panel,
@@ -1040,7 +1077,14 @@ impl HubView {
         };
         let workspace_path = workspace.to_path_buf();
         let plugins = self.plugins.clone();
+        let reveal = self
+            .pending_reveal
+            .take_if(|(file, _)| session.as_deref() == Some(file.as_path()))
+            .map(|(_, line)| line);
         let view = cx.new(|cx| ChatView::new(workspace_path, session, installation, plugins, cx));
+        if let Some(line) = reveal {
+            view.update(cx, |view, cx| view.reveal_line(line, cx));
+        }
         let subscription = cx.subscribe(&view, Self::on_chat_event);
         let entry = self.entry_mut(workspace)?;
         entry.expanded = true;
@@ -1531,6 +1575,7 @@ impl HubView {
 
     fn activate(&mut self, view: Entity<ChatView>, cx: &mut Context<Self>) {
         self.settings_page = None;
+        self.search_open = false;
         self.active_chat = Some(view);
         self.focus_active_chat = true;
         self.notice = None;
@@ -1815,7 +1860,9 @@ impl HubView {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let colors = cx.theme().colors.clone();
-        let is_active = self.settings_page.is_none() && self.active_chat.as_ref() == Some(&view);
+        let is_active = self.settings_page.is_none()
+            && !self.search_open
+            && self.active_chat.as_ref() == Some(&view);
         let chat = view.read(cx);
         let title = chat.title();
         let marker = match chat.status() {
@@ -1983,11 +2030,22 @@ impl HubView {
                     .into_any_element()
             };
         let actions = (active == Some(PanelKind::Sessions)).then(|| {
-            IconButton::new("add-workspace", IconName::Plus)
-                .tooltip(Tooltip::with_keys("Add project", "⌘O"))
-                .on_click(cx.listener(|this, _, window, cx| {
-                    this.prompt_add_workspace(&AddWorkspace, window, cx)
-                }))
+            h_flex()
+                .gap(px(2.))
+                .child(
+                    IconButton::new("search-sessions", IconName::Search)
+                        .tooltip(Tooltip::with_keys("Search sessions", "⌘⇧F"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.open_session_search(&SearchSessions, window, cx)
+                        })),
+                )
+                .child(
+                    IconButton::new("add-workspace", IconName::Plus)
+                        .tooltip(Tooltip::with_keys("Add project", "⌘O"))
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.prompt_add_workspace(&AddWorkspace, window, cx)
+                        })),
+                )
         });
         h_flex()
             .id(match side {
@@ -3321,6 +3379,7 @@ impl HubView {
                     input
                 })
             };
+        self.search_open = false;
         if self.settings_page.is_none() {
             self.settings_page = Some(SettingsPage {
                 ui_font: text_field(settings.ui_font_family.clone(), ".SystemUIFont", cx),
@@ -4382,9 +4441,16 @@ impl HubView {
                 None,
             ),
         };
-        let (breadcrumb, status) = if self.settings_page.is_some() {
+        let page_title = if self.settings_page.is_some() {
+            Some("Settings")
+        } else if self.search_open {
+            Some("Search")
+        } else {
+            None
+        };
+        let (breadcrumb, status) = if let Some(title) = page_title {
             (
-                Label::new("Settings")
+                Label::new(title)
                     .size(LabelSize::Small)
                     .weight(FontWeight::MEDIUM)
                     .color(text_color)
@@ -4723,8 +4789,15 @@ impl Render for HubView {
 
         // Cached: sidebar ticks and hub updates reuse the chat's last frame
         // unless the chat itself was notified.
+        let search_page = if self.settings_page.is_none() && self.search_open {
+            self.render_search_page(cx)
+        } else {
+            None
+        };
         let main = if let Some(page) = &self.settings_page {
             self.render_settings_page(page, cx)
+        } else if let Some(search_page) = search_page {
+            search_page
         } else {
             match &self.active_chat {
                 Some(chat) => div()
@@ -4751,6 +4824,7 @@ impl Render for HubView {
             .on_action(cx.listener(Self::toggle_details))
             .on_action(cx.listener(Self::select_session))
             .on_action(cx.listener(Self::open_settings))
+            .on_action(cx.listener(Self::open_session_search))
             .on_action(cx.listener(Self::toggle_left_dock))
             .on_action(cx.listener(Self::toggle_right_dock))
             .on_action(cx.listener(Self::toggle_files))

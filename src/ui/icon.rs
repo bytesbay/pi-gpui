@@ -72,6 +72,7 @@ icons! {
     Plus => "plus",
     Refresh => "refresh",
     Restore => "restore",
+    Search => "search",
     Sparkle => "sparkle",
     Stop => "stop",
     Terminal => "terminal",
