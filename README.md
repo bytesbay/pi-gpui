@@ -63,6 +63,7 @@ Plugins can draw live views inside tool calls, in any language. [This one](examp
 - Extension questions (`select`, `confirm`, `input`, `editor`) are asked inline in the transcript: pick with a click, digits or arrows, or type your own answer.
 - Plugins in any language: buttons, keybindings and status, tools for pi, and live views inside tool calls. [It runs DOOM](examples/plugins/doom). See [docs/PLUGINS.md](docs/PLUGINS.md).
 - Per-session model and thinking level, without touching pi's defaults.
+- Log pi in to model providers from the app: Settings → Model providers, or `/login` in a chat. pi's own `pi auth login` does the sign-in (browser, device code or API key) and keeps the credentials; the app shows its prompts and never reads them.
 - Markdown answers styled after Zed's agent panel, with syntax-highlighted code; all transcript text is selectable.
 - A context ring next to the model: context used and when pi compacts, prompt cache hit rate and expiry, subscription plan limits, and token totals for the session.
 - Compaction shown in the transcript with token counts and the summary.

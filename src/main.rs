@@ -12,6 +12,7 @@ mod keys;
 mod markdown;
 mod open_url;
 mod pi;
+mod pi_auth;
 mod pi_updates;
 mod platform;
 mod plugins;

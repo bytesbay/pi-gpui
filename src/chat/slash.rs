@@ -73,6 +73,13 @@ pub(super) fn builtin() -> Vec<SlashCommand> {
         ),
         command("clone", "Copy this session into a new one", None, None),
         command("model", "Switch the model", None, Some("⌘⇧M")),
+        command(
+            "login",
+            "Log pi in to a model provider",
+            Some("[provider]"),
+            None,
+        ),
+        command("logout", "Log pi out of a model provider", None, None),
         command("new", "Start a new session", None, Some("⌘N")),
         command("name", "Rename this session", Some("<name>"), None),
         command("session", "Show session info, usage and cost", None, None),

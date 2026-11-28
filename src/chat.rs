@@ -242,6 +242,8 @@ pub enum ChatEvent {
     /// A session link in a tool call was clicked; `workspace` is a project
     /// in the sidebar.
     OpenSession { workspace: PathBuf, file: PathBuf },
+    /// `/login [provider]` or `/logout`: the app's provider settings.
+    Login { provider: Option<String> },
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -1631,6 +1633,11 @@ impl ChatView {
                 }
             }
             "model" => self.toggle_model_picker(&ToggleModelPicker, window, cx),
+            "login" => cx.emit(ChatEvent::Login {
+                provider: Some(arguments.to_string())
+                    .filter(|provider| !provider.trim().is_empty()),
+            }),
+            "logout" => cx.emit(ChatEvent::Login { provider: None }),
             "new" => cx.emit(ChatEvent::NewSession),
             "name" if arguments.is_empty() => {
                 self.push_notice(Tone::Info, "Usage: /name <new session name>".to_string())

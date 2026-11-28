@@ -59,6 +59,7 @@ actions!(
     ]
 );
 
+mod login;
 mod search;
 
 /// ⌘1…⌘9: the n-th open session tab (1-based).
@@ -347,6 +348,10 @@ pub struct HubView {
     command_held: bool,
     /// The Settings page replaces the main area while open.
     settings_page: Option<SettingsPage>,
+    /// Model providers on the Settings page (logging pi in), once opened.
+    providers: Option<login::Providers>,
+    /// `/login` asked for the providers; `Some(None)` without a provider.
+    pending_login: Option<Option<String>>,
     /// Session search (⌘⇧F); kept when hidden, so it comes back as it was.
     search: Option<search::SearchPage>,
     /// The search page replaces the main area.
@@ -514,6 +519,8 @@ impl HubView {
             renaming_sessions: HashSet::new(),
             command_held: false,
             settings_page: None,
+            providers: None,
+            pending_login: None,
             search: None,
             search_open: false,
             pending_reveal: None,
@@ -1587,6 +1594,11 @@ impl HubView {
         match event {
             ChatEvent::Changed => {
                 self.report_session_state(&chat, cx);
+                cx.notify();
+            }
+            ChatEvent::Login { provider } => {
+                // Needs the window: done in the next render.
+                self.pending_login = Some(provider.clone());
                 cx.notify();
             }
             ChatEvent::OpenSession { workspace, file } => {
@@ -3409,6 +3421,7 @@ impl HubView {
             });
             self.ensure_plugin_fields(cx);
         }
+        self.ensure_providers(cx);
         window.focus(&self.focus_handle);
         cx.notify();
     }
@@ -3846,6 +3859,8 @@ impl HubView {
                     .py(px(28.))
                     .child(header)
                     .children(error_banner)
+                    .child(group("Model providers".into()))
+                    .children(self.render_providers(cx))
                     .child(group("Appearance".into()))
                     .child(row(
                         "Theme".into(),
@@ -4760,6 +4775,9 @@ impl Focusable for HubView {
 impl Render for HubView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let corners = crate::window_frame::content_corners(window);
+        if let Some(provider) = self.pending_login.take() {
+            self.show_providers(provider, window, cx);
+        }
         if std::mem::take(&mut self.focus_active_chat) {
             match &self.active_chat {
                 Some(chat) => window.focus(&chat.read(cx).composer_focus_handle(cx)),
